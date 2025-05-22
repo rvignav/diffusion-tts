@@ -60,9 +60,9 @@ MASTER_PARAMS = {
             
 #             print(best_score)
 
-for method in ["naive", "rejection", "beam", "zero_order", "eps_greedy"]: #, "rejection", "beam", "mcts", "zero_order", "eps_greedy"]:
+for method in ["beam"]: #, "rejection", "beam", "mcts", "zero_order", "eps_greedy"]:
     for name, scorer in zip(["clip"], [CLIPScorer()]):
-        for i, prompt in enumerate(["a kakapo", "a red wolf"]):
+        for i, prompt in enumerate(["three rockhopper penguins in a line"]):
             scores = []
             
             best_result, best_score = None, 0
