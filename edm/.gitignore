@@ -1,0 +1,8 @@
+**/*.png
+**/*.jpg
+**/*.jpeg
+**/*.gif
+**/*.bmp
+__pycache__/
+dnnlib/__pycache__/
+torch_utils/__pycache__/

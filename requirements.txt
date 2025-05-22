@@ -1,0 +1,11 @@
+torchmetrics
+datasets
+torch
+transformers
+matplotlib
+torchvision
+accelerate
+numpy
+tqdm
+Pillow
+requests
