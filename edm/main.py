@@ -784,16 +784,13 @@ def generate_image_grid(
         tweedie = method_params.tweedie
         eps = method_params.eps
         
-        print(f"Zero-Order parameters: lambda={lambda_param}, N={N}, K={K}, correlated={correlated}, tweedie={tweedie}, eps={eps}")
+        print(f"Zero-Order parameters: lambda={lambda_param / np.sqrt(3 * 64 * 64)}, N={N}, K={K}, tweedie={tweedie}, eps={eps}")
         
         # Use precomputed pivot noise if provided, otherwise generate a fresh one
         if precomputed_noise is not None and 'pivot' in precomputed_noise:
             pivot_noise = precomputed_noise['pivot']
         else:
             pivot_noise = torch.randn_like(x_next)
-        
-        # Dictionary to store best noise from each local search iteration for each timestep
-        all_timestep_noises = {}
         
         # Main denoising loop over timesteps
         for i, (t_cur, t_next) in tqdm.tqdm(list(enumerate(zip(t_steps[:-1], t_steps[1:]))), unit='step'):
@@ -933,84 +930,9 @@ def generate_image_grid(
                 # Update pivot_noise for next iteration
                 pivot_noise = new_pivot_noise
             
-            # Store all best noises for this timestep
-            # Shape: [K, batch_size, C, H, W]
-            all_timestep_noises[i] = torch.stack(best_noises_this_timestep)
-            
             # Use the final best noise for this denoising step
             x_next, _ = step(x_cur, t_cur, t_next, i, pivot_noise, class_labels)
 
-        # save all timestep noises
-        with open('all_timestep_noises.pkl', 'wb') as f:
-            pickle.dump(all_timestep_noises, f)
-    elif sampling_method == SamplingMethod.STEIN:
-        # Get Stein parameters
-        T = method_params.T
-        eta = method_params.eta
-        alpha = method_params.alpha
-        
-        print(f"Stein parameters: T={T}, eta={eta}, alpha={alpha}")
-        
-        # Initialize noise for each timestep - shape [num_steps, batch_size, C, H, W]
-        all_noises = {}
-        for i in range(len(t_steps) - 1):
-            all_noises[i] = torch.randn_like(x_next)  # Separate noise for each timestep and each sample
-        
-        # Store best noise configurations across iterations
-        best_noises = {i: all_noises[i].clone() for i in all_noises}
-        best_reward = torch.full((batch_size,), float('-inf'), device=device)
-        
-        # Main optimization loop
-        for t in tqdm.tqdm(range(T), desc="Stein optimization"):
-            # Generate clean image using current noises
-            x_t = latents.to(torch.float64) * t_steps[0]  # Start from initial latents
-            
-            # Denoising process using current noises
-            for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
-                x_cur = x_t
-                eps_i = all_noises[i]
-                x_t, _ = step(x_cur, t_cur, t_next, i, eps_i, class_labels)
-            
-            # Final denoised image
-            image_t = (x_t * 127.5 + 128).clip(0, 255).to(torch.uint8)
-            
-            # Compute reward using the scorer
-            # Use timesteps=0 for fully denoised final images
-            timesteps = torch.zeros(image_t.shape[0], device=device)
-            rewards = method_params.scorer(image_t, class_labels, timesteps)
-            
-            # Ensure rewards are on the correct device before comparison
-            rewards = rewards.to(device)
-            
-            # Update best noises if the reward is better
-            better_mask = rewards > best_reward
-            for i in all_noises:
-                # Update best noise where reward is better
-                for b_idx, is_better in enumerate(better_mask):
-                    if is_better:
-                        best_noises[i][b_idx] = all_noises[i][b_idx].clone()
-            
-            # Update best reward
-            best_reward = torch.maximum(best_reward, rewards)
-            
-            # Skip noise update on the last iteration
-            if t < T - 1:
-                # Update noises based on reward signal
-                for i in all_noises:
-                    # Compute z_tilde = z + eta * r * z
-                    z_tilde = all_noises[i] + eta * rewards.view(-1, 1, 1, 1) * all_noises[i]
-                    
-                    # Apply Gaussian perturbation: new z_t = alpha * z_tilde + sqrt(1-alpha^2) * N(0,I)
-                    noise = torch.randn_like(z_tilde)
-                    all_noises[i] = alpha * z_tilde + torch.sqrt(torch.tensor(1 - alpha**2, device=device)) * noise
-        
-        # Use the best noises to generate the final image
-        x_next = latents.to(torch.float64) * t_steps[0]
-        
-        for i, (t_cur, t_next) in enumerate(zip(t_steps[:-1], t_steps[1:])):
-            x_cur = x_next
-            eps_i = best_noises[i]
-            x_next, _ = step(x_cur, t_cur, t_next, i, eps_i, class_labels)
     else:  # NAIVE (default)
         for i, (t_cur, t_next) in tqdm.tqdm(list(enumerate(zip(t_steps[:-1], t_steps[1:]))), unit='step'):
             x_cur = x_next
@@ -1027,11 +949,6 @@ def generate_image_grid(
     scores = method_params.scorer(image_for_scoring, class_labels, timesteps)
     avg_score = scores.mean().item()
     print(f'Average score: {avg_score}')
-    
-    # Save score to txt file
-    score_path = dest_path.replace('.png', 'zo_score.txt')
-    with open(score_path, 'w') as f:
-        f.write(f'Average score: {avg_score}\n')
     
     # Create and save the final grid
     print(f'Saving image grid to "{dest_path}"...')
@@ -1072,15 +989,18 @@ def main():
         'imagenet': ImageNetScorer(dtype=torch.float32)
     }
 
-    method = SamplingMethod.EPS_GREEDY
+    method = SamplingMethod.NAIVE # choose between NAIVE, REJECTION_SAMPLING, BEAM_SEARCH, MCTS, ZERO_ORDER, EPS_GREEDY
     
     # Run experiments with each scorer
     for scorer_name, scorer in scorers.items():
         print(f"\n=== Running Zero-Order experiments with {scorer_name} scorer ===")
         
-        output_path = f'epsgreedy_{scorer_name}.png'
+        output_path = f'naive_{scorer_name}.png'
         print(f"Generating {output_path}...")
 
+        # Create parameters dictionary based on the method
+        sampling_params = {'scorer': scorer}
+        
         generate_image_grid(
             f'{model_root}/edm-imagenet-64x64-cond-adm.pkl', 
             output_path, 
@@ -1092,7 +1012,7 @@ def main():
             S_max=50, 
             S_noise=1.003, 
             sampling_method=method, 
-            sampling_params=SAMPLING_PARAMS[method], 
+            sampling_params=sampling_params, 
             gridw=g, 
             gridh=g,
         )

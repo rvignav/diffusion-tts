@@ -3,7 +3,7 @@
 ## Installation
 
 ```
-conda env create -f environment.yml -n edm -y
+cd edm/ && conda env create -f environment.yml -n edm -y && cd ..
 conda activate edm
 pip install -r requirements.txt
 ```
