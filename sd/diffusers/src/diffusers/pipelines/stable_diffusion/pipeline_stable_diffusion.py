@@ -14,6 +14,7 @@
 import inspect
 from typing import Any, Callable, Dict, List, Optional, Union
 import copy
+from dataclasses import dataclass, field
 
 import torch
 from packaging import version
@@ -1169,7 +1170,167 @@ class StableDiffusionPipeline(
                     latents = latents_cand
              
         elif method == "mcts": # ================================
-            pass
+            @dataclass
+            class MCTSNode:
+                latents: torch.Tensor
+                children: List["MCTSNode"] = field(default_factory=list)
+                parent: Optional["MCTSNode"] = None
+                visits: int = 0
+                total_reward: float = 0.0
+                
+                def add_child(self, child_latents):
+                    child = MCTSNode(child_latents, parent=self)
+                    self.children.append(child)
+                    return child
+                
+                def ucb_score(self, exploration_constant=1.0):
+                    # If node hasn't been visited, give it infinite score for exploration
+                    if self.visits == 0:
+                        return float('inf')
+                    
+                    # Exploitation term
+                    exploitation = self.total_reward / self.visits
+                    
+                    # Exploration term
+                    parent_visits = self.parent.visits if self.parent else 1
+                    exploration = exploration_constant * math.sqrt(math.log(parent_visits) / self.visits)
+                    
+                    return exploitation + exploration
+            
+            # Process each timestep using MCTS
+            for i, t in tqdm(enumerate(timesteps)):
+                if self.interrupt:
+                    continue
+                
+                # Create root node with current latents
+                root = MCTSNode(latents)
+                root.visits = 1  # Initialize root node with one visit
+                
+                # Run multiple MCTS iterations for this timestep
+                for _ in range(params['S']):
+                    # Selection phase: traverse tree to find promising leaf node
+                    node = root
+                    while node.children and all(child.visits > 0 for child in node.children):
+                        # Choose child with highest UCB score
+                        node = max(node.children, key=lambda child: child.ucb_score(params.get('c', 1.414)))
+                    
+                    # Expansion phase: if node is not fully expanded, add a child
+                    if len(node.children) < params['N']:
+                        # Generate latent model input
+                        latent_model_input = torch.cat([node.latents] * 2) if self.do_classifier_free_guidance else node.latents
+                        latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                        
+                        # Predict noise residual
+                        noise_pred = self.unet(
+                            latent_model_input,
+                            t,
+                            encoder_hidden_states=prompt_embeds,
+                            timestep_cond=timestep_cond,
+                            cross_attention_kwargs=self.cross_attention_kwargs,
+                            added_cond_kwargs=added_cond_kwargs,
+                            return_dict=False,
+                        )[0]
+                        
+                        # Perform guidance
+                        if self.do_classifier_free_guidance:
+                            noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                            noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                        
+                        if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
+                            noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=self.guidance_rescale)
+                        
+                        # Generate random noise and step
+                        noise = torch.randn_like(node.latents)
+                        child_latents, pred_x0 = self.scheduler.step(
+                            noise_pred, t, node.latents, variance_noise=noise, **extra_step_kwargs, return_dict=False
+                        )
+                        
+                        # Add child node
+                        child = node.add_child(child_latents)
+                        node = child
+                    
+                    # Simulation phase: evaluate the node by decoding and scoring
+                    # First get the predicted clean image
+                    latent_model_input = torch.cat([node.latents] * 2) if self.do_classifier_free_guidance else node.latents
+                    latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
+                    
+                    noise_pred = self.unet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=prompt_embeds,
+                        timestep_cond=timestep_cond,
+                        cross_attention_kwargs=self.cross_attention_kwargs,
+                        added_cond_kwargs=added_cond_kwargs,
+                        return_dict=False,
+                    )[0]
+                    
+                    if self.do_classifier_free_guidance:
+                        noise_pred_uncond, noise_pred_text = noise_pred.chunk(2)
+                        noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_text - noise_pred_uncond)
+                    
+                    if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
+                        noise_pred = rescale_noise_cfg(noise_pred, noise_pred_text, guidance_rescale=self.guidance_rescale)
+                    
+                    # Do full naive sampling from current timestep to end
+                    temp_latents = node.latents.clone()
+                    for j in range(i, len(timesteps)):
+                        t_inner = timesteps[j]
+                        
+                        # expand the latents if we are doing classifier free guidance
+                        latent_model_input_inner = torch.cat([temp_latents] * 2) if self.do_classifier_free_guidance else temp_latents
+                        latent_model_input_inner = self.scheduler.scale_model_input(latent_model_input_inner, t_inner)
+                        
+                        # predict the noise residual
+                        noise_pred_inner = self.unet(
+                            latent_model_input_inner,
+                            t_inner,
+                            encoder_hidden_states=prompt_embeds,
+                            timestep_cond=timestep_cond,
+                            cross_attention_kwargs=self.cross_attention_kwargs,
+                            added_cond_kwargs=added_cond_kwargs,
+                            return_dict=False,
+                        )[0]
+                        
+                        # perform guidance
+                        if self.do_classifier_free_guidance:
+                            noise_pred_uncond_inner, noise_pred_text_inner = noise_pred_inner.chunk(2)
+                            noise_pred_inner = noise_pred_uncond_inner + self.guidance_scale * (noise_pred_text_inner - noise_pred_uncond_inner)
+                        
+                        if self.do_classifier_free_guidance and self.guidance_rescale > 0.0:
+                            noise_pred_inner = rescale_noise_cfg(noise_pred_inner, noise_pred_text_inner, guidance_rescale=self.guidance_rescale)
+                        
+                        # Step with deterministic noise (zero noise for deterministic sampling)
+                        temp_latents, _ = self.scheduler.step(
+                            noise_pred_inner, t_inner, temp_latents, **extra_step_kwargs, return_dict=False
+                        )
+                    
+                    # The final temp_latents is our pred_x0
+                    pred_x0 = temp_latents
+                
+                # Select best child after all iterations
+                if root.children:
+                    best_child = max(root.children, key=lambda child: child.total_reward / child.visits if child.visits > 0 else -float('inf'))
+                    latents = best_child.latents
+                
+                # Callbacks
+                if callback_on_step_end is not None:
+                    callback_kwargs = {}
+                    for k in callback_on_step_end_tensor_inputs:
+                        callback_kwargs[k] = locals()[k]
+                    callback_outputs = callback_on_step_end(self, i, t, callback_kwargs)
+
+                    latents = callback_outputs.pop("latents", latents)
+                    prompt_embeds = callback_outputs.pop("prompt_embeds", prompt_embeds)
+                    negative_prompt_embeds = callback_outputs.pop("negative_prompt_embeds", negative_prompt_embeds)
+
+                # call the callback, if provided
+                if i == len(timesteps) - 1 or ((i + 1) > num_warmup_steps and (i + 1) % self.scheduler.order == 0):
+                    if callback is not None and i % callback_steps == 0:
+                        step_idx = i // getattr(self.scheduler, "order", 1)
+                        callback(step_idx, t, latents)
+
+                if XLA_AVAILABLE:
+                    xm.mark_step()
         
         else: # ================================
             for i, t in tqdm(enumerate(timesteps)):
@@ -1205,7 +1366,7 @@ class StableDiffusionPipeline(
                 pivot = torch.randn_like(latents)
 
                 if method == "eps_greedy" or method == "zero_order":
-                    for LOCAL_SEARCH_ITER in range(params['K']):
+                    for _ in range(params['K']):
                         noise_candidates = []
                         for _ in range(params['N']):
                             # choose random float between 0 and 1

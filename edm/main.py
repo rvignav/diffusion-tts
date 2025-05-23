@@ -707,7 +707,40 @@ def generate_image_grid(
                         i_sim_batch = [data[1] for data in all_traversal_data]
                         sample_indices_batch = [data[2] for data in all_traversal_data]
                         
-                        # Simply get the denoised prediction directly without simulating to the end
+                        # Run deterministic sampling from current timestep to the end
+                        temp_x = x_sim_batch.clone()
+                        
+                        # Process each simulation from its current timestep to the end
+                        for sim_idx, i_start in enumerate(i_sim_batch):
+                            temp_x_single = temp_x[sim_idx:sim_idx+1]
+                            
+                            # Get class labels for this simulation
+                            sim_class_label = None
+                            if class_labels_batch is not None:
+                                sample_idx_for_labels = sample_indices_batch[sim_idx]
+                                sim_class_label = class_labels_batch[sample_idx_for_labels:sample_idx_for_labels+1]
+                            
+                            # Sample from i_start to the end
+                            for j in range(i_start, len(t_steps) - 1):
+                                t_j_cur = t_steps[j]
+                                t_j_next = t_steps[j + 1]
+                                
+                                # Use step function with zero noise for deterministic sampling
+                                temp_x_single, _ = step(
+                                    temp_x_single, 
+                                    t_j_cur, 
+                                    t_j_next, 
+                                    j, 
+                                    torch.zeros_like(temp_x_single),  # Zero noise for deterministic
+                                    sim_class_label
+                                )
+                            
+                            # Update the batch with the fully sampled result
+                            temp_x[sim_idx:sim_idx+1] = temp_x_single
+                        
+                        # The final temp_x is our fully denoised result
+                        denoised = temp_x
+                        
                         # Get current timestep info for each simulation
                         current_t = torch.stack([t_steps[i_sim] for i_sim in i_sim_batch]).to(device)
                         
@@ -717,9 +750,6 @@ def generate_image_grid(
                             sim_class_labels = torch.cat([
                                 class_labels_batch[idx:idx+1] for idx in sample_indices_batch
                             ], dim=0)
-                        
-                        # Get the predicted fully denoised image directly from the current noisy state
-                        denoised = net(x_sim_batch, current_t, sim_class_labels).to(torch.float64)
                         
                         # Score the predicted denoised images
                         image_for_scoring = (denoised * 127.5 + 128).clip(0, 255).to(torch.uint8)

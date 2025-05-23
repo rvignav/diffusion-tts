@@ -38,46 +38,23 @@ MASTER_PARAMS = {
     'S': 8,
 }
 
-# for method in ["rejection", "mcts"]: #, "rejection", "beam", "mcts", "zero_order", "eps_greedy"]:
-#     for name, scorer in zip(["brightness", "compressibility"], [BrightnessScorer(), CompressibilityScorer()]):
-#         for i, prompt in enumerate(["a black lizard", "a potted fern with hundreds of leaves", "a panda wearing a bowtie"]):
-#             scores = []
-            
-#             best_result, best_score = None, 0
-#             for _ in range(MASTER_PARAMS['N'] if method == "rejection" else 1):
-#                 result, score = local_pipe(
-#                     prompt=prompt, 
-#                     num_inference_steps=50,
-#                     score_function=scorer,
-#                     method=method,
-#                     params=MASTER_PARAMS,
-#                 )
-#                 if score > best_score:
-#                     best_result, best_score = result, score
+prompt = "YOUR PROMPT HERE"
+method = "naive" # alternatives: "rejection", "beam", "mcts", "zero_order", "eps_greedy"
+    
+for name, scorer in zip(["brightness", "compressibility", "clip"], [BrightnessScorer(), CompressibilityScorer(), CLIPScorer()]):
+    best_result, best_score = None, 0
+    for _ in range(MASTER_PARAMS['N'] if method == "rejection" else 1):
+        result, score = local_pipe(
+            prompt=prompt, 
+            num_inference_steps=18,
+            score_function=scorer,
+            method=method,
+            params=MASTER_PARAMS,
+        )
+        if score > best_score:
+            best_result, best_score = result, score
 
-#                 result = best_result
-#                 best_result.images[0].save(f'{i}_{method}_{name}.png')
+    result = best_result
+    best_result.images[0].save(f'{method}_{name}.png')
             
-#             print(best_score)
-
-for method in ["beam"]: #, "rejection", "beam", "mcts", "zero_order", "eps_greedy"]:
-    for name, scorer in zip(["clip"], [CLIPScorer()]):
-        for i, prompt in enumerate(["three rockhopper penguins in a line"]):
-            scores = []
-            
-            best_result, best_score = None, 0
-            for _ in range(MASTER_PARAMS['N'] if method == "rejection" else 1):
-                result, score = local_pipe(
-                    prompt=prompt, 
-                    num_inference_steps=18,
-                    score_function=scorer,
-                    method=method,
-                    params=MASTER_PARAMS,
-                )
-                if score > best_score:
-                    best_result, best_score = result, score
-
-                result = best_result
-                best_result.images[0].save(f'{i}_{method}_{name}.png')
-            
-            print(best_score)
+    print(best_score)
