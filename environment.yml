@@ -1,4 +1,4 @@
-name: edm
+name: diffusion-tts
 channels:
   - pytorch
   - nvidia
