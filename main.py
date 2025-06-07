@@ -189,7 +189,7 @@ def main():
             if args.eps is not None:
                 sampling_params['eps'] = args.eps
             if args.B is not None:
-                sampling_params['b'] = args.B
+                sampling_params['B'] = args.B
             if args.S is not None:
                 sampling_params['S'] = args.S
 

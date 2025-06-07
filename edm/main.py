@@ -33,97 +33,14 @@ class SamplingMethod(Enum):
     EPS_GREEDY = auto()
 
 @dataclass
-class MCTSParams:
-    b: int = 4
-    N: int = 8
-    scorer: Scorer = field(default_factory=lambda: CompressibilityScorer(dtype=torch.float32))
-    #
-    # NFE ≈ num_steps^2 * (b + N)
-    # Reasoning:
-    #  - In each of the num_steps iterations, we expand the current root with b children,
-    #    then run N rollouts (each of which calls 'step' at least once).
-    #  - Then the simulation involves ~num_steps calls to `step' per rollout.
-    #  - So the total calls to 'step' per iteration is approximately b + N.
-    #  - Hence overall NFE ≈ num_steps^2 * (b + N).
-
-@dataclass
-class BeamSearchParams:
-    b: int = 4
-    k: int = 2
-    tweedie: bool = True  # Whether to score based on predicted x0 (True) or directly on x_candidate (False)
-    scorer: Scorer = field(default_factory=lambda: CompressibilityScorer(dtype=torch.float32))
-    #
-    # NFE = num_steps * (b * k)
-    # Reasoning:
-    #  - For each iteration in num_steps, every one of the k beams is expanded by b
-    #    new noise vectors (b calls to 'step' per beam).
-    #  - This yields b*k calls per iteration, repeated for num_steps iterations.
-    #  - Hence total NFE = num_steps * (b * k).
-
-@dataclass
-class ZeroOrderParams:
-    lambda_param: float = 0.05 * np.sqrt(3 * 64 * 64)
+class SamplingParams:
+    B: int = 2
     N: int = 4
     K: int = 20
-    correlated: bool = False
-    tweedie: bool = True
-    eps: float = 0.0
-    scorer: Scorer = field(default_factory=lambda: CompressibilityScorer(dtype=torch.float32))
-    #
-    # NFE = num_steps * (N * K)
-    # Reasoning:
-    #  - In each of the num_steps iterations, we perform K local-search updates.
-    #  - Each local-search update processes N noise candidates (so conceptually N calls),
-    #    even though they are batched together for speed.
-    #  - Hence total calls to 'step' per iteration is N*K, multiplied by num_steps.
-
-@dataclass
-class EpsGreedyParams:
-    lambda_param: float = 0.05 * np.sqrt(3 * 64 * 64)
-    N: int = 4
-    K: int = 20
-    correlated: bool = False
-    tweedie: bool = True
+    lambda_param: float = 0.15
     eps: float = 0.4
+    S: int = 8
     scorer: Scorer = field(default_factory=lambda: CompressibilityScorer(dtype=torch.float32))
-    #
-    # NFE = num_steps * (N * K)
-    # Reasoning:
-    #  - In each of the num_steps iterations, we perform K local-search updates.
-    #  - Each local-search update processes N noise candidates (so conceptually N calls),
-    #    even though they are batched together for speed.
-    #  - Hence total calls to 'step' per iteration is N*K, multiplied by num_steps.
-
-@dataclass
-class RejectionSamplingParams:
-    N: int = 4
-    scorer: Scorer = field(default_factory=lambda: CompressibilityScorer(dtype=torch.float32))
-    #
-    # NFE = num_steps * N
-    # Reasoning:
-    #  - At each of the num_steps denoising steps, the algorithm holds N noisy
-    #    candidates simultaneously (one call with a batch of N). From the perspective
-    #    of a single sample, it is effectively N calls per step.
-    #  - Hence total NFE for one sample is num_steps * N.
-
-@dataclass
-class NaiveParams:
-    scorer: Scorer = field(default_factory=lambda: CompressibilityScorer(dtype=torch.float32))
-    #
-    # NFE = num_steps
-    # Reasoning:
-    #  - The naive sampler calls 'step' exactly once per denoising iteration.
-    #  - Therefore total calls to 'step' is simply num_steps.
-
-# Define a mapping for easy parameter class lookup
-SAMPLING_PARAMS = {
-    SamplingMethod.MCTS: MCTSParams,
-    SamplingMethod.BEAM_SEARCH: BeamSearchParams,
-    SamplingMethod.ZERO_ORDER: ZeroOrderParams,
-    SamplingMethod.EPS_GREEDY: EpsGreedyParams,
-    SamplingMethod.NAIVE: NaiveParams,
-    SamplingMethod.REJECTION_SAMPLING: RejectionSamplingParams,
-}
 
 #----------------------------------------------------------------------------
 
@@ -143,7 +60,7 @@ def generate_image_grid(
     # Initialize sampling parameters
     if sampling_params is None:
         sampling_params = {}
-    params_class = SAMPLING_PARAMS[sampling_method]
+    params_class = SamplingParams
     method_params = params_class(**sampling_params)
     print(f'Using sampling method: {sampling_method.name}')
 
@@ -399,24 +316,14 @@ def generate_image_grid(
                     x_for_scoring = None
                     x_flat_var = None
                     
-                    if method_params.tweedie:
-                        # Score based on denoised predictions (x0)
-                        x_flat_var = x0_beam_candidates  # Already [b, C, H, W]
-                        
-                        # Normalize for scoring
-                        x_for_scoring = (x_flat_var * 127.5 + 128).clip(0, 255).to(torch.uint8)
-                        
-                        # Use timesteps=0 for denoised images
-                        timesteps = torch.zeros(x_for_scoring.shape[0], device=device)
-                    else:
-                        # Score based on noisy candidates
-                        x_flat_var = x_beam_candidates  # Already [b, C, H, W]
-                        
-                        # Normalize for scoring
-                        x_for_scoring = (x_flat_var * 127.5 + 128).clip(0, 255).to(torch.uint8)
-                        
-                        # Use appropriate timestep
-                        timesteps = torch.full((x_for_scoring.shape[0],), t_next.item(), device=device)
+                    # Score based on denoised predictions (x0)
+                    x_flat_var = x0_beam_candidates  # Already [b, C, H, W]
+                    
+                    # Normalize for scoring
+                    x_for_scoring = (x_flat_var * 127.5 + 128).clip(0, 255).to(torch.uint8)
+                    
+                    # Use timesteps=0 for denoised images
+                    timesteps = torch.zeros(x_for_scoring.shape[0], device=device)
                     
                     if class_labels is not None:
                         # Get class label for this beam
@@ -497,10 +404,9 @@ def generate_image_grid(
         x_next = x_next_all.view(batch_size, k, *x_next_all.shape[1:])[:, 0]  # [batch_size, C, H, W]
     elif sampling_method == SamplingMethod.MCTS:
         # Get MCTS parameters
-        b = method_params.b
-        N = method_params.N
+        b = method_params.N
+        N = method_params.S
         
-        # print(f"Starting MCTS sampling with b={b}, N={N}, batch_size={batch_size}")
         # Run MCTS separately for each batch element
         results = []
         
@@ -807,14 +713,12 @@ def generate_image_grid(
         # print(f"MCTS sampling completed for all {batch_size} elements")
     elif sampling_method == SamplingMethod.ZERO_ORDER or sampling_method == SamplingMethod.EPS_GREEDY:
         # Get Zero-Order parameters
-        lambda_param = method_params.lambda_param
+        lambda_param = method_params.lambda_param * np.sqrt(3 * 64 * 64)
         N = method_params.N
         K = method_params.K
-        correlated = method_params.correlated
-        tweedie = method_params.tweedie
         eps = method_params.eps
         
-        print(f"Zero-Order parameters: lambda={lambda_param / np.sqrt(3 * 64 * 64)}, N={N}, K={K}, tweedie={tweedie}, eps={eps}")
+        print(f"Zero-Order parameters: lambda={lambda_param / np.sqrt(3 * 64 * 64)}, N={N}, K={K}, eps={eps}")
         
         # Use precomputed pivot noise if provided, otherwise generate a fresh one
         if precomputed_noise is not None and 'pivot' in precomputed_noise:
@@ -827,11 +731,10 @@ def generate_image_grid(
             x_cur = x_next
             
             # Initialize pivot noise with a fresh Gaussian sample
-            if not correlated:
-                if precomputed_noise is not None and f'pivot_{i}' in precomputed_noise:
-                    pivot_noise = precomputed_noise[f'pivot_{i}']
-                else:
-                    pivot_noise = torch.randn_like(x_cur)
+            if precomputed_noise is not None and f'pivot_{i}' in precomputed_noise:
+                pivot_noise = precomputed_noise[f'pivot_{i}']
+            else:
+                pivot_noise = torch.randn_like(x_cur)
             
             # For each timestep, store the best noise from each local search iteration
             # Shape: [K, batch_size, C, H, W]
@@ -917,20 +820,13 @@ def generate_image_grid(
                 x0_candidates = x0_candidates.reshape(N, effective_batch_size, channels, height, width)
                 
                 # Score candidates
-                if tweedie:
-                    # Score based on predicted x0 (denoised result)
-                    # Reshape for scoring [N*batch_size, C, H, W]
-                    x_for_scoring = x0_candidates.reshape(-1, *x0_candidates.shape[2:])
-                    # Convert to proper format for scorer
-                    x_for_scoring = (x_for_scoring * 127.5 + 128).clip(0, 255).to(torch.uint8)
-                    # Use timesteps=0 for predicted clean images
-                    timesteps = torch.zeros(x_for_scoring.shape[0], device=device)
-                else:
-                    # Score based on noisy x_candidate
-                    x_for_scoring = x_candidates.reshape(-1, *x_candidates.shape[2:])
-                    x_for_scoring = (x_for_scoring * 127.5 + 128).clip(0, 255).to(torch.uint8)
-                    # Use current timestep for noisy candidates
-                    timesteps = torch.full((x_for_scoring.shape[0],), t_next.item(), device=device)
+                # Score based on predicted x0 (denoised result)
+                # Reshape for scoring [N*batch_size, C, H, W]
+                x_for_scoring = x0_candidates.reshape(-1, *x0_candidates.shape[2:])
+                # Convert to proper format for scorer
+                x_for_scoring = (x_for_scoring * 127.5 + 128).clip(0, 255).to(torch.uint8)
+                # Use timesteps=0 for predicted clean images
+                timesteps = torch.zeros(x_for_scoring.shape[0], device=device)
                 
                 # Make sure class labels are properly formatted for scorer
                 if class_labels is not None:
