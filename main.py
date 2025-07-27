@@ -194,7 +194,7 @@ def main():
                 sampling_params['S'] = args.S
 
         outname = args.output or f"edm_{args.method}_{args.scorer}.png"
-        generate_image_grid(
+        score = generate_image_grid(
             network_pkl,
             outname,
             latents,
@@ -211,7 +211,9 @@ def main():
             sampling_method=sampling_method,
             sampling_params=sampling_params,
         )
-        print(f"\n[EDM] Saved: {outname}\n")
+        current_filename = os.path.basename(__file__).split('.')[0]
+        with open(f'{current_filename}.txt', 'a') as f:
+            f.write(f'{outname}: {score}\n')
 
 if __name__ == '__main__':
     main()

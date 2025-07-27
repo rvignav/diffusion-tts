@@ -884,6 +884,7 @@ def generate_image_grid(
     PIL.Image.fromarray(image, 'RGB').save(dest_path)
     
     print('Done.')
+    return avg_score
 
 #----------------------------------------------------------------------------
 
