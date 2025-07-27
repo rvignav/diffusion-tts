@@ -1,0 +1,1 @@
+# ImageNet EDM FID eval
