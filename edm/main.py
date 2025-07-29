@@ -36,7 +36,7 @@ class SamplingMethod(Enum):
 class SamplingParams:
     B: int = 2
     N: int = 4
-    K: int = 20
+    K: int | tuple[int, int] = 20
     lambda_param: float = 0.15
     eps: float = 0.4
     S: int = 8
@@ -741,7 +741,13 @@ def generate_image_grid(
             best_noises_this_timestep = []
             
             # Run K iterations of local search
-            for k in range(K):
+            if isinstance(K, tuple):
+                littlen, littlem = K
+                currK = littlem if (i < littlen or i >= len(list(enumerate(zip(t_steps[:-1], t_steps[1:])))) - littlen) else 20
+            else:
+                currK = K
+
+            for k in range(currK):
                 base_noise = pivot_noise
                 
                 # Generate N candidate noises by adding scaled random vectors
