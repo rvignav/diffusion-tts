@@ -73,11 +73,11 @@ def main():
 
     scores = {}
 
-    for scorer in scorers:
+    for curr_scorer in scorers:
         for method in methods:
             for T in [4, 8, 16, 32, 64, 128, 256]:
                 dnnlib, dnnlib_util, BrightnessScorer, CompressibilityScorer, ImageNetScorer = import_edm()
-                scorer = get_scorer('edm', scorer, BrightnessScorer, CompressibilityScorer, ImageNetScorer=ImageNetScorer)
+                scorer = get_scorer('edm', curr_scorer, BrightnessScorer, CompressibilityScorer, ImageNetScorer=ImageNetScorer)
 
                 # EDM defaults
                 model_root = 'https://nvlabs-fi-cdn.nvidia.com/edm/pretrained'
@@ -118,7 +118,7 @@ def main():
                     if S is not None:
                         sampling_params['S'] = S
 
-                outname = f"edm_{method}_{scorer}.png"
+                outname = f"edm_{method}_{curr_scorer}.png"
                 score = generate_image_grid(
                     network_pkl,
                     outname,
@@ -136,7 +136,7 @@ def main():
                     sampling_method=sampling_method,
                     sampling_params=sampling_params,
                 )
-                scores[f'{scorer}_{method}_{T}'] = score
+                scores[f'{curr_scorer}_{method}_{T}'] = score
 
     current_filename = os.path.basename(__file__).split('.')[0]
     with open(f'{current_filename}.txt', 'a') as f:

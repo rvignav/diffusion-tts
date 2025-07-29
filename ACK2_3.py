@@ -73,11 +73,11 @@ def main():
 
     scores = {}
 
-    for scorer in scorers:
+    for curr_scorer in scorers:
         for method in methods:
             for cfg in [1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0]:
                 StableDiffusionPipeline, DDIMScheduler, BrightnessScorer, CompressibilityScorer, CLIPScorer = import_sd()
-                scorer = get_scorer('sd', scorer, BrightnessScorer, CompressibilityScorer, CLIPScorer=CLIPScorer)
+                scorer = get_scorer('sd', curr_scorer, BrightnessScorer, CompressibilityScorer, CLIPScorer=CLIPScorer)
 
                 model_id = "runwayml/stable-diffusion-v1-5"
                 local_scheduler = DDIMScheduler.from_pretrained(model_id, subfolder="scheduler")
@@ -150,7 +150,7 @@ def main():
                             best_result, best_score = result, score
                     best_scores.append(best_score)
 
-                scores[f'{scorer}_{method}_{cfg}'] = np.mean(best_scores)
+                scores[f'{curr_scorer}_{method}_{cfg}'] = np.mean(best_scores)
 
     current_filename = os.path.basename(__file__).split('.')[0]
     with open(f'{current_filename}.txt', 'a') as f:

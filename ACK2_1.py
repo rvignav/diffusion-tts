@@ -1,4 +1,3 @@
-print("================================================")
 print("ACK2_1: low K at intermediate steps - EDM")
 print("sweeps over (n,m) where we do m<20 local search iterations at first and last n denoising steps, 20 otherwise (intermediate denoising is harder)")
 print("================================================")
@@ -73,12 +72,12 @@ def main():
 
     scores = {}
 
-    for scorer in scorers:
+    for curr_scorer in scorers:
         for method in methods:
             for n in list(range(0, 9)):
                 for m in [0, 1, 2, 3, 5, 7, 10, 13, 17, 19]:
                     dnnlib, dnnlib_util, BrightnessScorer, CompressibilityScorer, ImageNetScorer = import_edm()
-                    scorer = get_scorer('edm', scorer, BrightnessScorer, CompressibilityScorer, ImageNetScorer=ImageNetScorer)
+                    scorer = get_scorer('edm', curr_scorer, BrightnessScorer, CompressibilityScorer, ImageNetScorer=ImageNetScorer)
 
                     # EDM defaults
                     model_root = 'https://nvlabs-fi-cdn.nvidia.com/edm/pretrained'
@@ -118,7 +117,7 @@ def main():
                         if S is not None:
                             sampling_params['S'] = S
 
-                    outname = f"edm_{method}_{scorer}.png"
+                    outname = f"edm_{method}_{curr_scorer}.png"
                     score = generate_image_grid(
                         network_pkl,
                         outname,
@@ -136,7 +135,7 @@ def main():
                         sampling_method=sampling_method,
                         sampling_params=sampling_params,
                     )
-                    scores[f'{scorer}_{method}_n{n}_m{m}'] = score
+                    scores[f'{curr_scorer}_{method}_n{n}_m{m}'] = score
 
     current_filename = os.path.basename(__file__).split('.')[0]
     with open(f'{current_filename}.txt', 'a') as f:

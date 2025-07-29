@@ -67,7 +67,7 @@ def generate_image_grid(
 
     # Load network
     print(f'Loading network from "{network_pkl}"...')
-    with dnnlib.util.open_url(network_pkl) as f:
+    with dnnlib.util.open_url(network_pkl, cache_dir='/code/testtime_scaling/') as f:
         net = pickle.load(f)['ema'].to(device)
         
     # Move data to device
@@ -1008,7 +1008,7 @@ def main():
     num_steps = 18
     
     # First load network to get info on the model's resolution, etc.
-    with dnnlib.util.open_url(f'{model_root}/edm-imagenet-64x64-cond-adm.pkl') as f:
+    with dnnlib.util.open_url(f'{model_root}/edm-imagenet-64x64-cond-adm.pkl', cache_dir='/code/testtime_scaling/') as f:
         net = pickle.load(f)['ema'].to(device)
     
     # Import scorers
