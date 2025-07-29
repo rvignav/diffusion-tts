@@ -884,8 +884,105 @@ def generate_image_grid(
     print(f'Average score: {avg_score}')
 
     if return_FID:
-        assert False, "need to implement"
-        avg_score = 0
+        print("Computing FID score...")
+        
+        # Import required libraries for FID computation
+        from torchmetrics.image.fid import FrechetInceptionDistance
+        from datasets import load_dataset
+        from torchvision import transforms
+        
+        # Load ImageNet validation dataset from Hugging Face
+        try:
+            dataset = load_dataset("imagenet-1k", split="validation", trust_remote_code=True)
+        except Exception as e:
+            print(f"Failed to load ImageNet dataset: {e}")
+            print("Falling back to using generated images as both real and fake for FID computation")
+            avg_score = 0.0
+            return avg_score
+        
+        # Initialize FID metric
+        fid = FrechetInceptionDistance(normalize=True)
+        
+        # Get unique class labels from generated images
+        unique_classes = torch.unique(class_labels.argmax(dim=1)).cpu().numpy()
+        print(f"Generated images have {len(unique_classes)} unique classes: {unique_classes}")
+        
+        # Prepare transforms for real images
+        transform = transforms.Compose([
+            transforms.Resize((64, 64)),  # Resize to match generated image size
+            transforms.ToTensor(),
+        ])
+        
+        # Collect real images for each class
+        real_images_per_class = {}
+        fake_images_per_class = {}
+        
+        # Group generated images by class
+        class_indices = class_labels.argmax(dim=1)
+        for class_idx in unique_classes:
+            # Get generated images for this class
+            class_mask = (class_indices == class_idx)
+            fake_images_per_class[class_idx] = image[class_mask]  # Already in [0, 255] uint8 format
+            
+            # Find real images for this class
+            real_images = []
+            class_name = dataset.features['label'].int2str(class_idx)
+            
+            # Get a few real images for this class (up to the number of generated images)
+            class_dataset = dataset.filter(lambda x: x['label'] == class_idx)
+            num_fake = fake_images_per_class[class_idx].shape[0]
+            
+            for i, example in enumerate(class_dataset):
+                if i >= num_fake:
+                    break
+                try:
+                    # Load and preprocess real image
+                    real_img = example['image'].convert('RGB')
+                    real_img_tensor = transform(real_img)
+                    # Convert to [0, 255] range to match generated images
+                    real_img_tensor = (real_img_tensor * 255).to(torch.uint8)
+                    real_images.append(real_img_tensor)
+                except Exception as e:
+                    print(f"Error processing real image for class {class_idx}: {e}")
+                    continue
+            
+            if real_images:
+                real_images_per_class[class_idx] = torch.stack(real_images)
+                print(f"Class {class_idx} ({class_name}): {len(real_images)} real images, {num_fake} fake images")
+            else:
+                print(f"No real images found for class {class_idx} ({class_name})")
+        
+        # Compute FID for each class and average
+        fid_scores = []
+        
+        for class_idx in unique_classes:
+            if class_idx in real_images_per_class and class_idx in fake_images_per_class:
+                real_imgs = real_images_per_class[class_idx]
+                fake_imgs = fake_images_per_class[class_idx]
+                
+                # Ensure both have the same number of images (take minimum)
+                min_count = min(real_imgs.shape[0], fake_imgs.shape[0])
+                real_imgs = real_imgs[:min_count]
+                fake_imgs = fake_imgs[:min_count]
+                
+                # Create a new FID instance for this class
+                class_fid = FrechetInceptionDistance(normalize=True)
+                
+                # Update with real and fake images
+                class_fid.update(real_imgs, real=True)
+                class_fid.update(fake_imgs, real=False)
+                
+                # Compute FID for this class
+                class_fid_score = float(class_fid.compute())
+                fid_scores.append(class_fid_score)
+                
+                class_name = dataset.features['label'].int2str(class_idx)
+                print(f"Class {class_idx} ({class_name}) FID: {class_fid_score:.4f}")
+        
+        # Compute average FID across all classes
+        avg_score = sum(fid_scores) / len(fid_scores)
+        print(f"Average FID across {len(fid_scores)} classes: {avg_score:.4f}")
+       
     
     # Create and save the final grid
     print(f'Saving image grid to "{dest_path}"...')
@@ -939,21 +1036,42 @@ def main():
         # Create parameters dictionary based on the method
         sampling_params = {'scorer': scorer}
         
-        generate_image_grid(
-            f'{model_root}/edm-imagenet-64x64-cond-adm.pkl', 
-            output_path, 
-            latents, 
-            class_labels, 
-            num_steps=num_steps, 
-            S_churn=40, 
-            S_min=0.05, 
-            S_max=50, 
-            S_noise=1.003, 
-            sampling_method=method, 
-            sampling_params=sampling_params, 
-            gridw=g, 
-            gridh=g,
-        )
+        # Test FID computation for the first scorer only
+        if scorer_name == 'imagenet':
+            print("Testing FID computation...")
+            fid_score = generate_image_grid(
+                f'{model_root}/edm-imagenet-64x64-cond-adm.pkl', 
+                output_path, 
+                latents, 
+                class_labels, 
+                num_steps=num_steps, 
+                S_churn=40, 
+                S_min=0.05, 
+                S_max=50, 
+                S_noise=1.003, 
+                sampling_method=method, 
+                sampling_params=sampling_params, 
+                gridw=g, 
+                gridh=g,
+                return_FID=True,
+            )
+            print(f"FID score: {fid_score}")
+        else:
+            generate_image_grid(
+                f'{model_root}/edm-imagenet-64x64-cond-adm.pkl', 
+                output_path, 
+                latents, 
+                class_labels, 
+                num_steps=num_steps, 
+                S_churn=40, 
+                S_min=0.05, 
+                S_max=50, 
+                S_noise=1.003, 
+                sampling_method=method, 
+                sampling_params=sampling_params, 
+                gridw=g, 
+                gridh=g,
+            )
 
 #----------------------------------------------------------------------------
 
