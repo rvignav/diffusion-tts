@@ -52,6 +52,7 @@ def generate_image_grid(
     sampling_method: SamplingMethod = SamplingMethod.NAIVE,
     sampling_params: Optional[Dict[str, Any]] = None,
     precomputed_noise: Optional[Dict[int, torch.Tensor]] = None,
+    return_FID=False,
 ):
     # Set up environment and seed
     batch_size = gridw * gridh
@@ -881,6 +882,10 @@ def generate_image_grid(
     scores = method_params.scorer(image_for_scoring, class_labels, timesteps)
     avg_score = scores.mean().item()
     print(f'Average score: {avg_score}')
+
+    if return_FID:
+        assert False, "need to implement"
+        avg_score = 0
     
     # Create and save the final grid
     print(f'Saving image grid to "{dest_path}"...')
