@@ -24,3 +24,4 @@ dependencies:
     - torchvision
     - accelerate
     - image-reward
+    - hpsv2

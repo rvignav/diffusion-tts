@@ -318,3 +318,113 @@ class ImageRewardScorer(Scorer):
         
         return scores_tensor
 
+class HPSScorer(Scorer):
+    def __init__(self, hps_version="v2.1", dtype=torch.float32):
+        """
+        Initialize a scorer that uses HPSv2 to evaluate human preferences for text-to-image generation.
+        
+        Args:
+            hps_version (str): The HPS version to use (default: "v2.1")
+            dtype: Torch data type for the output
+        """
+        super().__init__(dtype)
+        
+        # Import hpsv2 here to avoid dependency issues
+        try:
+            import hpsv2
+            self.hpsv2 = hpsv2
+        except ImportError:
+            raise ImportError("hpsv2 package not found. Please install it with: pip install hpsv2")
+        
+        self.hps_version = hps_version
+
+    @torch.no_grad()
+    def __call__(self, images, prompts, timesteps=None):
+        """
+        Score images based on human preferences using HPSv2.
+        
+        Args:
+            images: List of PIL Images, torch.Tensor images, or image paths
+            prompts: List of text prompts or single prompt string
+            timesteps: Not used by HPSv2 (kept for compatibility)
+            
+        Returns:
+            torch.Tensor: Human preference scores for each image
+        """
+        # Handle single image case
+        if not isinstance(images, list):
+            images = [images]
+        
+        # Handle single prompt case
+        if not isinstance(prompts, list):
+            prompts = [prompts] * len(images)
+        elif len(prompts) == 1 and len(images) > 1:
+            prompts = prompts * len(images)
+        
+        # Ensure we have the same number of prompts as images
+        if len(prompts) != len(images):
+            raise ValueError(f"Number of prompts ({len(prompts)}) must match number of images ({len(images)})")
+        
+        # Convert torch.Tensor images to PIL Images for HPSv2
+        pil_images = []
+        for img in images:
+            if isinstance(img, torch.Tensor):
+                # Handle different tensor formats
+                if img.dim() == 4:  # [B, C, H, W] - take first image
+                    img = img.squeeze(0)
+                elif img.dim() == 3:  # [C, H, W]
+                    pass
+                else:
+                    raise ValueError(f"Unexpected tensor shape: {img.shape}")
+                
+                # Convert to numpy and transpose if needed
+                img_np = img.cpu().numpy()
+                if img_np.shape[0] in [1, 3]:  # CHW format
+                    img_np = np.transpose(img_np, (1, 2, 0))  # Convert to HWC
+                
+                # Handle grayscale
+                if img_np.shape[2] == 1:
+                    img_np = img_np.squeeze(2)
+                
+                # Convert to uint8 if needed
+                if img_np.dtype != np.uint8:
+                    if img_np.max() <= 1.0:
+                        img_np = (img_np * 255).astype(np.uint8)
+                    else:
+                        img_np = img_np.astype(np.uint8)
+                
+                pil_img = Image.fromarray(img_np)
+            elif isinstance(img, np.ndarray):
+                # Handle numpy array
+                if img.ndim == 3 and img.shape[0] in [1, 3]:  # CHW format
+                    img = np.transpose(img, (1, 2, 0))  # Convert to HWC
+                if img.ndim == 3 and img.shape[2] == 1:  # Grayscale
+                    img = img.squeeze(2)
+                if img.dtype != np.uint8:
+                    if img.max() <= 1.0:
+                        img = (img * 255).astype(np.uint8)
+                    else:
+                        img = img.astype(np.uint8)
+                pil_img = Image.fromarray(img)
+            elif isinstance(img, Image.Image):
+                pil_img = img
+            elif isinstance(img, str):
+                # Assume it's a file path
+                pil_img = Image.open(img)
+            else:
+                raise ValueError(f"Unsupported image type: {type(img)}")
+            
+            pil_images.append(pil_img)
+        
+        # Score each image with its corresponding prompt
+        scores = []
+        for prompt, pil_img in zip(prompts, pil_images):
+            score = self.hpsv2.score(pil_img, prompt, hps_version=self.hps_version)
+            scores.append(score)
+        
+        # Convert to tensor and move to appropriate device
+        device = next(self.parameters()).device if list(self.parameters()) else torch.device('cpu')
+        scores_tensor = torch.tensor(scores, dtype=self.dtype, device=device)
+        
+        return scores_tensor
+
