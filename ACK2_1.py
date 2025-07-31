@@ -74,8 +74,8 @@ def main():
 
     for curr_scorer in scorers:
         for method in methods:
-            for n in list(range(0, 9)):
-                for m in [0, 1, 2, 3, 5, 7, 10, 13, 17, 19]:
+            for (n,m) in [(0,1), (1,2), (3, 2), (2, 5), (4, 3), (4, 7), (6, 5), (8, 3), (9, 6)]:
+                if True:
                     dnnlib, dnnlib_util, BrightnessScorer, CompressibilityScorer, ImageNetScorer = import_edm()
                     scorer = get_scorer('edm', curr_scorer, BrightnessScorer, CompressibilityScorer, ImageNetScorer=ImageNetScorer)
 
