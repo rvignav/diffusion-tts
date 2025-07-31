@@ -157,9 +157,11 @@ def main():
             )
             scores[f'{curr_scorer}_{method}_{T}'] = score
 
-    with open(output_dir / f'{script_name}_gpu{args.gpu_id}.txt', 'w') as f:
-        for key, value in scores.items():
-            f.write(f'{key}: {value}\n')
+        # Write separate file for each scorer/method combination
+        task_scores = {k: v for k, v in scores.items() if k.startswith(f'{curr_scorer}_{method}_')}
+        with open(output_dir / f'{script_name}_{backend}_{curr_scorer}_{method}_results.txt', 'w') as f:
+            for key, value in task_scores.items():
+                f.write(f'{key}: {value}\n')
 
 if __name__ == '__main__':
     main()
