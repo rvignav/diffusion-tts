@@ -1,5 +1,5 @@
 print("================================================")
-print("Sj6K_4: Compositional prompts - SD")
+print("D5sF_2: SDXL + hpsv2")
 print("================================================")
 
 import os
@@ -34,15 +34,15 @@ def import_sd():
     spec = importlib.util.spec_from_file_location('diffusers', str(diffusers_path.resolve()))
     sys.modules['diffusers'] = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(sys.modules['diffusers'])
-    from diffusers import StableDiffusionPipeline, DDIMScheduler
+    from diffusers import StableDiffusionXLPipeline, DDIMScheduler
     sys.path.insert(0, str(sd_dir))
-    from scorers import BrightnessScorer, CompressibilityScorer, CLIPScorer
-    return StableDiffusionPipeline, DDIMScheduler, BrightnessScorer, CompressibilityScorer, CLIPScorer
+    from scorers import BrightnessScorer, CompressibilityScorer, CLIPScorer, ImageRewardScorer, HPSScorer
+    return StableDiffusionXLPipeline, DDIMScheduler, BrightnessScorer, CompressibilityScorer, CLIPScorer, ImageRewardScorer, HPSScorer
 
 # =========================
 # Scorer Factory
 # =========================
-def get_scorer(backend, scorer_name, BrightnessScorer, CompressibilityScorer, CLIPScorer=None, ImageNetScorer=None):
+def get_scorer(backend, scorer_name, BrightnessScorer, CompressibilityScorer, CLIPScorer=None, ImageNetScorer=None, ImageRewardScorer=None, HPSScorer=None):
     """Return the appropriate scorer instance for the backend and scorer name."""
     if scorer_name == 'brightness':
         return BrightnessScorer(dtype=torch.float32)
@@ -52,6 +52,10 @@ def get_scorer(backend, scorer_name, BrightnessScorer, CompressibilityScorer, CL
         return CLIPScorer(dtype=torch.float32)
     elif scorer_name == 'imagenet' and backend == 'edm':
         return ImageNetScorer(dtype=torch.float32)
+    elif scorer_name == 'imagereward':
+        return ImageRewardScorer()  
+    elif scorer_name== 'hps':
+        return HPSScorer()
     else:
         raise ValueError(f"Unknown or invalid scorer '{scorer_name}' for backend '{backend}'")
 
@@ -70,8 +74,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     backend = 'sd'
-    scorers = ['brightness', 'compressibility', 'clip']
-    methods = ['zero_order', 'eps_greedy']     #['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
+    scorers = ['hps']
+    methods = ['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
     N = 4
     lambda_param = 0.15
     eps = 0.4
@@ -93,19 +97,19 @@ def main():
 
     for curr_scorer, method in tasks:
         task_scores = {}  # Separate scores for this task
-        StableDiffusionPipeline, DDIMScheduler, BrightnessScorer, CompressibilityScorer, CLIPScorer = import_sd()
-        scorer = get_scorer('sd', curr_scorer, BrightnessScorer, CompressibilityScorer, CLIPScorer=CLIPScorer)
+        StableDiffusionXLPipeline, DDIMScheduler, BrightnessScorer, CompressibilityScorer, CLIPScorer, ImageRewardScorer, HPSScorer = import_sd()
+        scorer = get_scorer('sd', curr_scorer, BrightnessScorer, CompressibilityScorer, CLIPScorer=CLIPScorer, ImageRewardScorer=ImageRewardScorer, HPSScorer=HPSScorer)
 
-        model_id = "runwayml/stable-diffusion-v1-5"
+        model_id = "stabilityai/stable-diffusion-xl-base-1.0"
         local_scheduler = DDIMScheduler.from_pretrained(model_id, subfolder="scheduler")
-        local_pipe = StableDiffusionPipeline.from_pretrained(
+        local_pipe = StableDiffusionXLPipeline.from_pretrained(
             model_id,
             scheduler=local_scheduler,
             torch_dtype=torch.float16,
         ).to(device)
 
         method = method
-        num_inference_steps = 50
+        num_inference_steps = 100
         MASTER_PARAMS = {
             'N': N,
             'lambda': lambda_param,
@@ -116,42 +120,42 @@ def main():
         }
         best_scores = []
         prompts = [
-            "a cat painting a portrait",
-            "a dog flying a kite",
-            "a horse baking a cake",
-            "a monkey solving a Rubik's cube",
-            "a rabbit riding a unicycle",
-            "a zebra playing the violin",
-            "a spider building a sandcastle",
-            "a bird skateboarding at the park",
-            "a sheep knitting a sweater",
-            "a deer reading a newspaper",
-            "a cow driving a convertible",
-            "a goat climbing a skyscraper",
-            "a lion performing in a circus",
-            "a tiger cooking spaghetti",
-            "a bear meditating on a mountaintop",
-            "a raccoon stealing a pizza",
-            "a fox programming a computer",
-            "a wolf painting graffiti",
-            "a lizard playing the drums",
-            "a beetle lifting weights",
-            "an ant playing chess",
-            "a butterfly hosting a tea party",
-            "a fish writing a novel",
-            "a shark conducting an orchestra",
-            "a whale doing yoga",
-            "a dolphin juggling balls",
-            "a squirrel playing poker",
-            "a mouse sailing a boat",
-            "a rat making sushi",
-            "a snake breakdancing",
-            "a turtle hiking a trail",
-            "a frog watering plants",
-            "a chicken driving a taxi",
-            "a duck singing karaoke",
-            "a goose washing the dishes",
-            "a bee taking photographs"
+            "a tench",
+            "a goldfish",
+            "a great white shark",
+            "a tiger shark",
+            "a hammerhead",
+            "an electric ray",
+            "a stingray",
+            "a cock",
+            "a hen",
+            "an ostrich",
+            "a brambling",
+            "a goldfinch",
+            "a house finch",
+            "a junco",
+            "an indigo bunting",
+            "a robin",
+            "a bulbul",
+            "a jay",
+            "a magpie",
+            "a chickadee",
+            "a water ouzel",
+            "a kite",
+            "a bald eagle",
+            "a vulture",
+            "a great grey owl",
+            "a European fire salamander",
+            "a common newt",
+            "an eft",
+            "a spotted salamander",
+            "an axolotl",
+            "a bullfrog",
+            "a tree frog",
+            "a tailed frog",
+            "a loggerhead",
+            "a leatherback turtle",
+            "a mud turtle"
         ]
         for prompt in prompts:
             best_result, best_score = None, float('-inf')
@@ -165,7 +169,11 @@ def main():
                 )
                 if score > best_score:
                     best_result, best_score = result, score
-            best_scores.append(best_score)
+            # Convert tensor score to CPU float if needed
+            if torch.is_tensor(best_score):
+                best_scores.append(best_score.cpu().item())
+            else:
+                best_scores.append(float(best_score))
 
         task_scores[f'{curr_scorer}_{method}'] = np.mean(best_scores)
 

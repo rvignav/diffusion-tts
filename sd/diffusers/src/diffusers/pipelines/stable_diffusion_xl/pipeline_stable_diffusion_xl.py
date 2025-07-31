@@ -873,6 +873,9 @@ class StableDiffusionXLPipeline(
             Union[Callable[[int, int, Dict], None], PipelineCallback, MultiPipelineCallbacks]
         ] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
+        score_function: Optional[Callable] = None,
+        method: Optional[str] = "eps_greedy",
+        params: Optional[dict] = None,
         **kwargs,
     ):
         r"""
@@ -1309,4 +1312,21 @@ class StableDiffusionXLPipeline(
         if not return_dict:
             return (image,)
 
-        return StableDiffusionXLPipelineOutput(images=image)
+        # Calculate score if score_function is provided
+        if score_function is not None:
+            # Handle different image formats
+            if isinstance(image, list):
+                # image is already a list of PIL images
+                score_images = image
+            else:
+                # image is a tensor, convert to list
+                score_images = [(img * 127.5 + 128).clip(0, 255).to(torch.uint8) for img in image]
+            
+            score = score_function(
+                images=score_images,
+                prompts=[prompt] if isinstance(prompt, str) else prompt,
+                timesteps=None,
+            )
+            return StableDiffusionXLPipelineOutput(images=image), score
+        else:
+            return StableDiffusionXLPipelineOutput(images=image)

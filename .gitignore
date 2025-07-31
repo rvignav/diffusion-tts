@@ -172,3 +172,15 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Additional file types to ignore
+*.pkl
+*.png
+*.sh
+
+# Output directories
+outputs/
+*_results.txt
+
+# Python packages directory (Lustre space)
+python_packages/

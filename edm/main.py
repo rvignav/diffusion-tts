@@ -53,6 +53,7 @@ def generate_image_grid(
     sampling_params: Optional[Dict[str, Any]] = None,
     precomputed_noise: Optional[Dict[int, torch.Tensor]] = None,
     return_FID=False,
+    net=None,
 ):
     # Set up environment and seed
     batch_size = gridw * gridh
@@ -65,10 +66,13 @@ def generate_image_grid(
     method_params = params_class(**sampling_params)
     print(f'Using sampling method: {sampling_method.name}')
 
-    # Load network
-    print(f'Loading network from "{network_pkl}"...')
-    with dnnlib.util.open_url(network_pkl, cache_dir='/code/testtime_scaling/') as f:
-        net = pickle.load(f)['ema'].to(device)
+    # Load network if not provided
+    if net is None:
+        print(f'Loading network from "{network_pkl}"...')
+        with dnnlib.util.open_url(network_pkl, cache_dir='/code/testtime_scaling/') as f:
+            net = pickle.load(f)['ema'].to(device)
+    else:
+        net = net.to(device)
         
     # Move data to device
     latents = latents.to(device)

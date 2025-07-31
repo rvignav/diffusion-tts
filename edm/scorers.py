@@ -60,18 +60,27 @@ class ImageNetScorer(Scorer):
         # URL for the classifier weights
         url = "https://openaipublic.blob.core.windows.net/diffusion/jul-2021/64x64_classifier.pt"
         
-        # Create a directory for downloaded models if it doesn't exist
-        cache_dir = os.path.expanduser("~/.cache/imagenet_classifier")
+        # Use Lustre cache directory to avoid quota issues
+        cache_dir = os.environ.get('DNNLIB_CACHE_DIR', os.path.expanduser("~/.cache/imagenet_classifier"))
         os.makedirs(cache_dir, exist_ok=True)
         
         # Path to save the downloaded model
         model_path = os.path.join(cache_dir, "64x64_classifier.pt")
+        temp_path = model_path + ".tmp"
         
-        # Download the model if it doesn't exist
+        # Atomic download: use temp file and rename to avoid concurrent access issues
         if not os.path.exists(model_path):
-            print(f"Downloading classifier model from {url}...")
-            urllib.request.urlretrieve(url, model_path)
-            print(f"Model downloaded to {model_path}")
+            if not os.path.exists(temp_path):  # Another process might be downloading
+                print(f"Downloading classifier model from {url}...")
+                urllib.request.urlretrieve(url, temp_path)
+                os.rename(temp_path, model_path)  # Atomic rename
+                print(f"Model downloaded to {model_path}")
+            else:
+                # Wait for other process to finish download
+                import time
+                while os.path.exists(temp_path) and not os.path.exists(model_path):
+                    time.sleep(1)
+                print(f"Using downloaded model at {model_path}")
         
         # Create model with parameters matching OpenAI's implementation
         self.model = self.create_classifier(

@@ -59,9 +59,19 @@ def get_scorer(backend, scorer_name, BrightnessScorer, CompressibilityScorer, CL
 # Main Logic
 # =========================
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID (0-8)')
+    parser.add_argument('--task_id', type=int, default=None, help='Task ID for parallel execution')
+    args = parser.parse_args()
+    
+    # Setup output directory
+    script_name = os.path.basename(__file__).split('.')[0]
+    output_dir = Path('outputs') / script_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
     backend = 'sd'
     scorers = ['brightness', 'compressibility', 'clip']
-    methods = ['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
+    methods = ['zero_order', 'eps_greedy']     #['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
     N = 4
     lambda_param = 0.15
     eps = 0.4
@@ -69,93 +79,101 @@ def main():
     B = 2
     S = 8
     seed = 0
-    device = 'cuda'
+    device = f'cuda:{args.gpu_id}'
 
-    scores = {}
+    # Create all task combinations
+    tasks = [(scorer, method) for scorer in scorers for method in methods]
+    
+    # If task_id specified, run only that task
+    if args.task_id is not None:
+        if args.task_id >= len(tasks):
+            print(f"Invalid task_id {args.task_id}. Max is {len(tasks)-1}")
+            return
+        tasks = [tasks[args.task_id]]
 
-    for curr_scorer in scorers:
-        for method in methods:
-            for cfg in [1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0]:
-                StableDiffusionPipeline, DDIMScheduler, BrightnessScorer, CompressibilityScorer, CLIPScorer = import_sd()
-                scorer = get_scorer('sd', curr_scorer, BrightnessScorer, CompressibilityScorer, CLIPScorer=CLIPScorer)
+    for curr_scorer, method in tasks:
+        task_scores = {}  # Separate scores for this task
+        for cfg in [1.5, 3.0, 4.5, 6.0, 7.5, 9.0, 10.5, 12.0]:
+            StableDiffusionPipeline, DDIMScheduler, BrightnessScorer, CompressibilityScorer, CLIPScorer = import_sd()
+            scorer = get_scorer('sd', curr_scorer, BrightnessScorer, CompressibilityScorer, CLIPScorer=CLIPScorer)
 
-                model_id = "runwayml/stable-diffusion-v1-5"
-                local_scheduler = DDIMScheduler.from_pretrained(model_id, subfolder="scheduler")
-                local_pipe = StableDiffusionPipeline.from_pretrained(
-                    model_id,
-                    scheduler=local_scheduler,
-                    torch_dtype=torch.float16,
-                ).to(device)
+            model_id = "runwayml/stable-diffusion-v1-5"
+            local_scheduler = DDIMScheduler.from_pretrained(model_id, subfolder="scheduler")
+            local_pipe = StableDiffusionPipeline.from_pretrained(
+                model_id,
+                scheduler=local_scheduler,
+                torch_dtype=torch.float16,
+            ).to(device)
 
-                method = method
-                MASTER_PARAMS = {
-                    'N': N,
-                    'lambda': lambda_param,
-                    'eps': eps,
-                    'K': K,
-                    'B': B,
-                    'S': S,
-                }
-                best_scores = []
-                prompts = [
-                    "a tench",
-                    "a goldfish",
-                    "a great white shark",
-                    "a tiger shark",
-                    "a hammerhead",
-                    "an electric ray",
-                    "a stingray",
-                    "a cock",
-                    "a hen",
-                    "an ostrich",
-                    "a brambling",
-                    "a goldfinch",
-                    "a house finch",
-                    "a junco",
-                    "an indigo bunting",
-                    "a robin",
-                    "a bulbul",
-                    "a jay",
-                    "a magpie",
-                    "a chickadee",
-                    "a water ouzel",
-                    "a kite",
-                    "a bald eagle",
-                    "a vulture",
-                    "a great grey owl",
-                    "a European fire salamander",
-                    "a common newt",
-                    "an eft",
-                    "a spotted salamander",
-                    "an axolotl",
-                    "a bullfrog",
-                    "a tree frog",
-                    "a tailed frog",
-                    "a loggerhead",
-                    "a leatherback turtle",
-                    "a mud turtle"
-                ]
-                for prompt in prompts:
-                    best_result, best_score = None, float('-inf')
-                    for _ in range(MASTER_PARAMS['N'] if method == "rejection" else 1):
-                        result, score = local_pipe(
-                            prompt=prompt,
-                            num_inference_steps=50,
-                            score_function=scorer,
-                            method=method,
-                            params=MASTER_PARAMS,
-                            guidance_scale=cfg,
-                        )
-                        if score > best_score:
-                            best_result, best_score = result, score
-                    best_scores.append(best_score)
+            method = method
+            MASTER_PARAMS = {
+                'N': N,
+                'lambda': lambda_param,
+                'eps': eps,
+                'K': K,
+                'B': B,
+                'S': S,
+            }
+            best_scores = []
+            prompts = [
+                "a tench",
+                "a goldfish",
+                "a great white shark",
+                "a tiger shark",
+                "a hammerhead",
+                "an electric ray",
+                "a stingray",
+                "a cock",
+                "a hen",
+                "an ostrich",
+                "a brambling",
+                "a goldfinch",
+                "a house finch",
+                "a junco",
+                "an indigo bunting",
+                "a robin",
+                "a bulbul",
+                "a jay",
+                "a magpie",
+                "a chickadee",
+                "a water ouzel",
+                "a kite",
+                "a bald eagle",
+                "a vulture",
+                "a great grey owl",
+                "a European fire salamander",
+                "a common newt",
+                "an eft",
+                "a spotted salamander",
+                "an axolotl",
+                "a bullfrog",
+                "a tree frog",
+                "a tailed frog",
+                "a loggerhead",
+                "a leatherback turtle",
+                "a mud turtle"
+            ]
+            for prompt in prompts:
+                best_result, best_score = None, float('-inf')
+                for _ in range(MASTER_PARAMS['N'] if method == "rejection" else 1):
+                    result, score = local_pipe(
+                        prompt=prompt,
+                        num_inference_steps=50,
+                        score_function=scorer,
+                        method=method,
+                        params=MASTER_PARAMS,
+                        guidance_scale=cfg,
+                    )
+                    if score > best_score:
+                        best_result, best_score = result, score
+                best_scores.append(best_score)
 
-                scores[f'{curr_scorer}_{method}_{cfg}'] = np.mean(best_scores)
+            task_scores[f'{curr_scorer}_{method}_{cfg}'] = np.mean(best_scores)
 
-    current_filename = os.path.basename(__file__).split('.')[0]
-    with open(f'{current_filename}.txt', 'a') as f:
-        for key, value in scores.items():
-            f.write(f'{key}: {value}\n')
+        # Write separate file for each scorer/method combination
+        with open(output_dir / f'{script_name}_{backend}_{curr_scorer}_{method}.txt', 'w') as f:
+            for key, value in task_scores.items():
+                f.write(f'{key}: {value}\n')
 
 if __name__ == '__main__':
     main()

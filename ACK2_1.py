@@ -1,7 +1,3 @@
-print("ACK2_1: low K at intermediate steps - EDM")
-print("sweeps over (n,m) where we do m<20 local search iterations at first and last n denoising steps, 20 otherwise (intermediate denoising is harder)")
-print("================================================")
-
 import os
 import sys
 import argparse
@@ -59,6 +55,20 @@ def get_scorer(backend, scorer_name, BrightnessScorer, CompressibilityScorer, CL
 # Main Logic
 # =========================
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--gpu_id', type=int, default=0, help='GPU ID (0-5)')
+    parser.add_argument('--task_id', type=int, default=None, help='Task ID (0-5) for parallel execution')
+    args = parser.parse_args()
+    
+    print("ACK2_1: low K at intermediate steps - EDM")
+    print("sweeps over (n,m) where we do m<20 local search iterations at first and last n denoising steps, 20 otherwise (intermediate denoising is harder)")
+    print("================================================")
+    
+    # Setup output directory
+    script_name = os.path.basename(__file__).split('.')[0]
+    output_dir = Path('outputs') / script_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
     backend = 'edm'
     scorers = ['brightness', 'compressibility', 'imagenet']
     methods = ['zero_order', 'eps_greedy']
@@ -68,79 +78,98 @@ def main():
     B = 2
     S = 8
     seed = 0
-    device = 'cuda'
+    device = f'cuda:{args.gpu_id}'
+    
+    # Create all task combinations
+    tasks = [(scorer, method) for scorer in scorers for method in methods]
+    
+    # If task_id specified, run only that task
+    if args.task_id is not None:
+        if args.task_id >= len(tasks):
+            print(f"Invalid task_id {args.task_id}. Max is {len(tasks)-1}")
+            return
+        tasks = [tasks[args.task_id]]
+        print(f"Running task {args.task_id}: {tasks[0]} on GPU {args.gpu_id}")
 
     scores = {}
+    
+    # Load network once before all loops
+    dnnlib, dnnlib_util, BrightnessScorer, CompressibilityScorer, ImageNetScorer = import_edm()
+    model_root = 'https://nvlabs-fi-cdn.nvidia.com/edm/pretrained'
+    network_pkl = f'{model_root}/edm-imagenet-64x64-cond-adm.pkl'
+    print(f'Loading network from "{network_pkl}" (once)...')
+    with dnnlib.util.open_url(network_pkl, cache_dir='/lustre/fs12/portfolios/nvr/projects/nvr_lpr_compgenai/users/mmardani/outputs/') as f:
+        import pickle
+        net = pickle.load(f)['ema'].to(torch.device(device))
 
-    for curr_scorer in scorers:
-        for method in methods:
-            for n in list(range(0, 9)):
-                for m in [0, 1, 2, 3, 5, 7, 10, 13, 17, 19]:
-                    dnnlib, dnnlib_util, BrightnessScorer, CompressibilityScorer, ImageNetScorer = import_edm()
-                    scorer = get_scorer('edm', curr_scorer, BrightnessScorer, CompressibilityScorer, ImageNetScorer=ImageNetScorer)
+    for curr_scorer, method in tasks:
+        task_scores = {}  # Separate scores for this task
+        for n in list(range(0, 9)):
+            for m in [10, 13, 17, 19]:     #[0, 1, 2, 3, 5, 7, 10, 13, 17, 19]:
+                scorer = get_scorer('edm', curr_scorer, BrightnessScorer, CompressibilityScorer, ImageNetScorer=ImageNetScorer)
 
-                    # EDM defaults
-                    model_root = 'https://nvlabs-fi-cdn.nvidia.com/edm/pretrained'
-                    network_pkl = f'{model_root}/edm-imagenet-64x64-cond-adm.pkl'
-                    gridw = gridh = 6
-                    latents = torch.randn([gridw * gridh, 3, 64, 64])
-                    class_labels = torch.eye(1000)[torch.randint(1000, size=[gridw * gridh])]
-                    device = torch.device(device)
-                    num_steps = 18
+                # EDM defaults
+                gridw = gridh = 6
+                latents = torch.randn([gridw * gridh, 3, 64, 64])
+                class_labels = torch.eye(1000)[torch.randint(1000, size=[gridw * gridh])]
+                device = torch.device(device)
+                num_steps = 18
 
-                    # EDM method mapping
-                    from edm.main import SamplingMethod, generate_image_grid
-                    method_map = {
-                        'naive': SamplingMethod.NAIVE,
-                        'rejection': SamplingMethod.REJECTION_SAMPLING,
-                        'beam': SamplingMethod.BEAM_SEARCH,
-                        'mcts': SamplingMethod.MCTS,
-                        'zero_order': SamplingMethod.ZERO_ORDER,
-                        'eps_greedy': SamplingMethod.EPS_GREEDY,
-                    }
-                    if method not in method_map:
-                        raise ValueError(f"Unknown method: {method}")
-                    sampling_method = method_map[method]
-                    sampling_params = {'scorer': scorer}
+                # EDM method mapping
+                from edm.main import SamplingMethod, generate_image_grid
+                method_map = {
+                    'naive': SamplingMethod.NAIVE,
+                    'rejection': SamplingMethod.REJECTION_SAMPLING,
+                    'beam': SamplingMethod.BEAM_SEARCH,
+                    'mcts': SamplingMethod.MCTS,
+                    'zero_order': SamplingMethod.ZERO_ORDER,
+                    'eps_greedy': SamplingMethod.EPS_GREEDY,
+                }
+                if method not in method_map:
+                    raise ValueError(f"Unknown method: {method}")
+                sampling_method = method_map[method]
+                sampling_params = {'scorer': scorer}
 
-                    # Add master params if relevant for method
-                    if method in ['rejection', 'zero_order', 'eps_greedy', 'beam', 'mcts']:
-                        if N is not None:
-                            sampling_params['N'] = N
-                        sampling_params['K'] = (n, m)
-                        if lambda_param is not None:
-                            sampling_params['lambda_param'] = lambda_param
-                        if eps is not None:
-                            sampling_params['eps'] = eps
-                        if B is not None:
-                            sampling_params['B'] = B
-                        if S is not None:
-                            sampling_params['S'] = S
+                # Add master params if relevant for method
+                if method in ['rejection', 'zero_order', 'eps_greedy', 'beam', 'mcts']:
+                    if N is not None:
+                        sampling_params['N'] = N
+                    sampling_params['K'] = (n, m)
+                    if lambda_param is not None:
+                        sampling_params['lambda_param'] = lambda_param
+                    if eps is not None:
+                        sampling_params['eps'] = eps
+                    if B is not None:
+                        sampling_params['B'] = B
+                    if S is not None:
+                        sampling_params['S'] = S
 
-                    outname = f"edm_{method}_{curr_scorer}.png"
-                    score = generate_image_grid(
-                        network_pkl,
-                        outname,
-                        latents,
-                        class_labels,
-                        seed=seed,
-                        gridw=gridw,
-                        gridh=gridh,
-                        device=device,
-                        num_steps=num_steps,
-                        S_churn=40,
-                        S_min=0.05,
-                        S_max=50,
-                        S_noise=1.003,
-                        sampling_method=sampling_method,
-                        sampling_params=sampling_params,
-                    )
-                    scores[f'{curr_scorer}_{method}_n{n}_m{m}'] = score
+                outname = f"edm_{method}_{curr_scorer}_n{n}_m{m}.png"
+                score = generate_image_grid(
+                    None,
+                    str(output_dir / outname),
+                    latents,
+                    class_labels,
+                    seed=seed,
+                    gridw=gridw,
+                    gridh=gridh,
+                    device=device,
+                    num_steps=num_steps,
+                    S_churn=40,
+                    S_min=0.05,
+                    S_max=50,
+                    S_noise=1.003,
+                    sampling_method=sampling_method,
+                    sampling_params=sampling_params,
+                    net=net,
+                )
+                task_scores[f'{curr_scorer}_{method}_n{n}_m{m}'] = score
+                scores[f'{curr_scorer}_{method}_n{n}_m{m}'] = score
 
-    current_filename = os.path.basename(__file__).split('.')[0]
-    with open(f'{current_filename}.txt', 'a') as f:
-        for key, value in scores.items():
-            f.write(f'{key}: {value}\n')
+        # Write separate file for each scorer/method combination
+        with open(output_dir / f'{script_name}_{backend}_{curr_scorer}_{method}_results.txt', 'w') as f:
+            for key, value in task_scores.items():
+                f.write(f'{key}: {value}\n')
 
 if __name__ == '__main__':
     main()
