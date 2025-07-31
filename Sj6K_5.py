@@ -71,7 +71,7 @@ def main():
     
     backend = 'edm'
     scorers = ['brightness', 'compressibility', 'imagenet']
-    methods = ['zero_order', 'eps_greedy']     #['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
+    methods = ['beam', 'mcts'] 
     K = 20
     N = 4
     lambda_param = 0.15

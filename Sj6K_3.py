@@ -71,7 +71,7 @@ def main():
     
     backend = 'sd'
     scorers = ['brightness', 'compressibility', 'clip']
-    methods = ['naive', 'rejection']     #['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
+    methods = ['beam', 'mcts', 'zero_order', 'eps_greedy']
     N = 4
     lambda_param = 0.15
     eps = 0.4
@@ -83,6 +83,7 @@ def main():
     
     # Create all task combinations
     tasks = [(scorer, method) for scorer in scorers for method in methods]
+    tasks.append(('clip', 'rejection'))
     
     # If task_id specified, run only that task
     if args.task_id is not None:

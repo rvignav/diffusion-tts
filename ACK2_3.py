@@ -71,7 +71,7 @@ def main():
     
     backend = 'sd'
     scorers = ['brightness', 'compressibility', 'clip']
-    methods = ['zero_order', 'eps_greedy']     #['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
+    methods = ['beam', 'mcts', 'zero_order', 'eps_greedy']
     N = 4
     lambda_param = 0.15
     eps = 0.4
