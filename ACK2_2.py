@@ -101,7 +101,7 @@ def main():
             # EDM defaults
             model_root = 'https://nvlabs-fi-cdn.nvidia.com/edm/pretrained'
             network_pkl = f'{model_root}/edm-imagenet-64x64-cond-adm.pkl'
-            gridw = gridh = 6
+            gridw = gridh = 3
             latents = torch.randn([gridw * gridh, 3, 64, 64])
             class_labels = torch.eye(1000)[torch.randint(1000, size=[gridw * gridh])]
             device = torch.device(device)

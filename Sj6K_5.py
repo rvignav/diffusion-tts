@@ -71,7 +71,7 @@ def main():
     
     backend = 'edm'
     scorers = ['brightness', 'compressibility', 'imagenet']
-    methods = ['zero_order', 'eps_greedy']     #['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
+    methods = ['beam', 'mcts']
     K = 20
     N = 4
     lambda_param = 0.15
@@ -99,7 +99,7 @@ def main():
         # EDM defaults
         model_root = 'https://nvlabs-fi-cdn.nvidia.com/edm/pretrained'
         network_pkl = f'{model_root}/edm-imagenet-64x64-cond-adm.pkl'
-        gridw = gridh = 6  # for 36 images (reasonable for GPU memory)
+        gridw = gridh = 3  # for 36 images (reasonable for GPU memory)
         latents = torch.randn([gridw * gridh, 3, 64, 64])
         class_labels = torch.eye(1000)[torch.randint(1000, size=[gridw * gridh])]
         device_tensor = torch.device(device)

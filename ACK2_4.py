@@ -71,7 +71,7 @@ def main():
     
     backend = 'edm'
     scorers = ['brightness', 'compressibility', 'imagenet']
-    methods = ['zero_order', 'eps_greedy']     #['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
+    methods = ['beam', 'mcts']    #['naive', 'rejection']
     K = 20
     N = 4
     lambda_param = 0.15
@@ -81,8 +81,17 @@ def main():
     seed = 0
     device = f'cuda:{args.gpu_id}'
 
-    # Create all task combinations
-    tasks = [(scorer, method) for scorer in scorers for method in methods]
+    # Remove 'naive' and 'rejection' for 'imagenet', add 'zero_order' and 'eps_greedy' for 'imagenet'
+    tasks = []
+    for scorer in scorers:
+        if scorer == 'imagenet':
+            # Only allow 'beam', 'mcts', 'zero_order', 'eps_greedy' for imagenet
+            for method in ['beam', 'mcts', 'zero_order', 'eps_greedy']:
+                tasks.append((scorer, method))
+        else:
+            # For other scorers, keep original methods
+            for method in methods:
+                tasks.append((scorer, method))
     
     # If task_id specified, run only that task
     if args.task_id is not None:
@@ -101,7 +110,7 @@ def main():
             # EDM defaults
             model_root = 'https://nvlabs-fi-cdn.nvidia.com/edm/pretrained'
             network_pkl = f'{model_root}/edm-imagenet-64x64-cond-adm.pkl'
-            gridw = gridh = 6
+            gridw = gridh = 3
             latents = torch.randn([gridw * gridh, 3, 64, 64])
             class_labels = torch.eye(1000)[torch.randint(1000, size=[gridw * gridh])]
             device = torch.device(device)

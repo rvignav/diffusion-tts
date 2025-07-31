@@ -104,12 +104,12 @@ def main():
 
     for curr_scorer, method in tasks:
         task_scores = {}  # Separate scores for this task
-        for n in list(range(0, 9)):
-            for m in [10, 13, 17, 19]:     #[0, 1, 2, 3, 5, 7, 10, 13, 17, 19]:
+        for (n,m) in [(0,1), (1,2), (3, 2), (2, 5), (4, 3), (4, 7), (6, 5), (8, 3), (9, 6)]:
+            if True:
                 scorer = get_scorer('edm', curr_scorer, BrightnessScorer, CompressibilityScorer, ImageNetScorer=ImageNetScorer)
 
                 # EDM defaults
-                gridw = gridh = 6
+                gridw = gridh = 3
                 latents = torch.randn([gridw * gridh, 3, 64, 64])
                 class_labels = torch.eye(1000)[torch.randint(1000, size=[gridw * gridh])]
                 device = torch.device(device)

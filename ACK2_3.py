@@ -70,8 +70,8 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     
     backend = 'sd'
-    scorers = ['brightness', 'compressibility', 'clip']
-    methods = ['zero_order', 'eps_greedy']     #['naive', 'rejection', 'beam', 'mcts', 'zero_order', 'eps_greedy']
+    scorers = ['compressibility']   #['brightness', 'compressibility', 'clip']
+    methods = ['beam', 'mcts', 'zero_order', 'eps_greedy']
     N = 4
     lambda_param = 0.15
     eps = 0.4

@@ -176,11 +176,23 @@ cython_debug/
 # Additional file types to ignore
 *.pkl
 *.png
-*.sh
+#*.sh
 
 # Output directories
 outputs/
 *_results.txt
+
+# Ignore compressed files
+*.gz
+
+# Ignore pickle files
+*.pkl
+
+# Ignore output directories
+outputs/
+outputs_slurm/
+
+
 
 # Python packages directory (Lustre space)
 python_packages/
