@@ -813,6 +813,7 @@ class StableDiffusionPipeline(
         method: Optional[str] = "eps_greedy",
         params: Optional[dict] = None,
         config: Optional[dict] = None,
+        few_step_model: Optional[str] = None,
         **kwargs,
     ):
         r"""
@@ -1037,6 +1038,39 @@ class StableDiffusionPipeline(
                 guidance_scale_tensor, embedding_dim=self.unet.config.time_cond_proj_dim
             ).to(device=device, dtype=latents.dtype)
 
+        # 6.3 Initialize few-step model if specified
+        few_step_pipeline = None
+        few_step_prompt_embeds = None
+        if few_step_model is not None:
+            try:
+                from diffusers import StableDiffusionPipeline
+                few_step_pipeline = StableDiffusionPipeline.from_pretrained(
+                    few_step_model,
+                    torch_dtype=latents.dtype,
+                    safety_checker=None,
+                    requires_safety_checker=False,
+                ).to(device)
+                # Set to eval mode
+                few_step_pipeline.unet.eval()
+                few_step_pipeline.vae.eval()
+                few_step_pipeline.text_encoder.eval()
+                
+                # Encode prompt for few-step model
+                few_step_prompt_embeds, _ = few_step_pipeline.encode_prompt(
+                    prompt,
+                    device,
+                    num_images_per_prompt,
+                    self.do_classifier_free_guidance,
+                    negative_prompt,
+                    prompt_embeds=prompt_embeds,
+                    negative_prompt_embeds=negative_prompt_embeds,
+                    lora_scale=lora_scale,
+                    clip_skip=self.clip_skip,
+                )
+            except Exception as e:
+                print(f"Warning: Failed to load few-step model {few_step_model}: {e}")
+                few_step_pipeline = None
+
         # 7. Denoising loop
         max_score = None
 
@@ -1082,6 +1116,33 @@ class StableDiffusionPipeline(
 
                     for noise_candidate in noise_candidates:
                         latents_cand, pred_x0 = self.scheduler.step(noise_pred, t, beam_latents, variance_noise=noise_candidate, **extra_step_kwargs, return_dict=False)
+                        
+                        # If few-step model is available, use it to predict pred_x0
+                        if few_step_pipeline is not None:
+                            with torch.no_grad():
+                                # Use the few-step model to predict pred_x0 from current latent
+                                # The few-step model takes the noisy latent and predicts the clean latent directly
+                                # We need to scale the input for the few-step model
+                                scaled_latents = few_step_pipeline.scheduler.scale_model_input(latents_cand, t)
+                                
+                                # Get the few-step model's prediction
+                                few_step_noise_pred = few_step_pipeline.unet(
+                                    scaled_latents,
+                                    t,
+                                    encoder_hidden_states=few_step_prompt_embeds,
+                                    timestep_cond=timestep_cond,
+                                    cross_attention_kwargs=self.cross_attention_kwargs,
+                                    added_cond_kwargs=added_cond_kwargs,
+                                    return_dict=False,
+                                )[0]
+                                
+                                # Convert noise prediction to pred_x0 using the few-step model's scheduler
+                                few_step_pred_x0, _ = few_step_pipeline.scheduler.step(
+                                    few_step_noise_pred, t, latents_cand, return_dict=False
+                                )
+                                
+                                # Use the few-step model's pred_x0
+                                pred_x0 = few_step_pred_x0
 
                         # expand the latents if we are doing classifier free guidance
                         latent_model_input_tminusone = torch.cat([latents_cand] * 2) if self.do_classifier_free_guidance else latents_cand
@@ -1386,6 +1447,33 @@ class StableDiffusionPipeline(
                         for noise_candidate in noise_candidates:
                             latents_cand, pred_x0 = self.scheduler.step(noise_pred, t, latents, variance_noise=noise_candidate, **extra_step_kwargs, return_dict=False)
                             
+                            # If few-step model is available, use it to predict pred_x0
+                            if few_step_pipeline is not None:
+                                with torch.no_grad():
+                                    # Use the few-step model to predict pred_x0 from current latent
+                                    # The few-step model takes the noisy latent and predicts the clean latent directly
+                                    # We need to scale the input for the few-step model
+                                    scaled_latents = few_step_pipeline.scheduler.scale_model_input(latents_cand, t)
+                                    
+                                    # Get the few-step model's prediction
+                                    few_step_noise_pred = few_step_pipeline.unet(
+                                        scaled_latents,
+                                        t,
+                                        encoder_hidden_states=few_step_prompt_embeds,
+                                        timestep_cond=timestep_cond,
+                                        cross_attention_kwargs=self.cross_attention_kwargs,
+                                        added_cond_kwargs=added_cond_kwargs,
+                                        return_dict=False,
+                                    )[0]
+                                    
+                                    # Convert noise prediction to pred_x0 using the few-step model's scheduler
+                                    few_step_pred_x0, _ = few_step_pipeline.scheduler.step(
+                                        few_step_noise_pred, t, latents_cand, return_dict=False
+                                    )
+                                    
+                                    # Use the few-step model's pred_x0
+                                    pred_x0 = few_step_pred_x0
+                            
 
                             # expand the latents if we are doing classifier free guidance
                             latent_model_input_tminusone = torch.cat([latents_cand] * 2) if self.do_classifier_free_guidance else latents_cand
@@ -1436,7 +1524,34 @@ class StableDiffusionPipeline(
                         max_score = max(noise2score.values())
                         pivot = max(noise2score, key=noise2score.get)
                 
-                latents, _ = self.scheduler.step(noise_pred, t, latents, variance_noise=pivot, **extra_step_kwargs, return_dict=False)
+                latents, pred_x0 = self.scheduler.step(noise_pred, t, latents, variance_noise=pivot, **extra_step_kwargs, return_dict=False)
+                
+                # If few-step model is available, use it to predict pred_x0 for the final step
+                if few_step_pipeline is not None:
+                    with torch.no_grad():
+                        # Use the few-step model to predict pred_x0 from current latent
+                        # The few-step model takes the noisy latent and predicts the clean latent directly
+                        # We need to scale the input for the few-step model
+                        scaled_latents = few_step_pipeline.scheduler.scale_model_input(latents, t)
+                        
+                        # Get the few-step model's prediction
+                        few_step_noise_pred = few_step_pipeline.unet(
+                            scaled_latents,
+                            t,
+                            encoder_hidden_states=few_step_prompt_embeds,
+                            timestep_cond=timestep_cond,
+                            cross_attention_kwargs=self.cross_attention_kwargs,
+                            added_cond_kwargs=added_cond_kwargs,
+                            return_dict=False,
+                        )[0]
+                        
+                        # Convert noise prediction to pred_x0 using the few-step model's scheduler
+                        few_step_pred_x0, _ = few_step_pipeline.scheduler.step(
+                            few_step_noise_pred, t, latents, return_dict=False
+                        )
+                        
+                        # Use the few-step model's pred_x0
+                        pred_x0 = few_step_pred_x0
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
