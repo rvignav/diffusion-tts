@@ -60,8 +60,8 @@ def get_scorer(backend, scorer_name, BrightnessScorer, CompressibilityScorer, CL
 # =========================
 def main():
     backend = 'sd'
-    scorers = ['brightness', 'compressibility', 'clip']
-    methods = ['beam', 'zero_order', 'eps_greedy']
+    scorers = ['clip']
+    methods = ['zero_order', 'eps_greedy', 'beam']
     N = 4
     lambda_param = 0.15
     eps = 0.4
@@ -85,7 +85,7 @@ def main():
         ).to(device)
 
         method = method
-        num_inference_steps = 100
+        num_inference_steps = 50
         MASTER_PARAMS = {
             'N': N,
             'lambda': lambda_param,

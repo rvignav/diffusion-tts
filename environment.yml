@@ -25,3 +25,4 @@ dependencies:
     - torchvision
     - accelerate
     - image-reward
+    - supervision

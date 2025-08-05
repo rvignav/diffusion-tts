@@ -1055,15 +1055,19 @@ class StableDiffusionPipeline(
                 few_step_pipeline.vae.eval()
                 few_step_pipeline.text_encoder.eval()
                 
+                # Set timesteps for the few-step pipeline's scheduler
+                few_step_pipeline.scheduler.set_timesteps(num_inference_steps, device=device)
+                
                 # Encode prompt for few-step model
+                # Use the few-step model's own text encoder to ensure compatibility
                 few_step_prompt_embeds, _ = few_step_pipeline.encode_prompt(
                     prompt,
                     device,
                     num_images_per_prompt,
                     self.do_classifier_free_guidance,
                     negative_prompt,
-                    prompt_embeds=prompt_embeds,
-                    negative_prompt_embeds=negative_prompt_embeds,
+                    prompt_embeds=None,  # Don't reuse main model's embeddings
+                    negative_prompt_embeds=None,  # Don't reuse main model's embeddings
                     lora_scale=lora_scale,
                     clip_skip=self.clip_skip,
                 )
@@ -1136,8 +1140,9 @@ class StableDiffusionPipeline(
                                     return_dict=False,
                                 )[0]
                                 
-                                # Convert noise prediction to pred_x0 using the few-step model's scheduler
-                                few_step_pred_x0, _ = few_step_pipeline.scheduler.step(
+                                # Convert noise prediction to pred_x0 using the main model's scheduler
+                                # This ensures compatibility with the main pipeline
+                                few_step_pred_x0, _ = self.scheduler.step(
                                     few_step_noise_pred, t, latents_cand, return_dict=False
                                 )
                                 
@@ -1466,8 +1471,9 @@ class StableDiffusionPipeline(
                                         return_dict=False,
                                     )[0]
                                     
-                                    # Convert noise prediction to pred_x0 using the few-step model's scheduler
-                                    few_step_pred_x0, _ = few_step_pipeline.scheduler.step(
+                                    # Convert noise prediction to pred_x0 using the main model's scheduler
+                                    # This ensures compatibility with the main pipeline
+                                    few_step_pred_x0, _ = self.scheduler.step(
                                         few_step_noise_pred, t, latents_cand, return_dict=False
                                     )
                                     
@@ -1545,8 +1551,9 @@ class StableDiffusionPipeline(
                             return_dict=False,
                         )[0]
                         
-                        # Convert noise prediction to pred_x0 using the few-step model's scheduler
-                        few_step_pred_x0, _ = few_step_pipeline.scheduler.step(
+                        # Convert noise prediction to pred_x0 using the main model's scheduler
+                        # This ensures compatibility with the main pipeline
+                        few_step_pred_x0, _ = self.scheduler.step(
                             few_step_noise_pred, t, latents, return_dict=False
                         )
                         

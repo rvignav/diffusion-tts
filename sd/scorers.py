@@ -19,7 +19,7 @@ class Scorer(torch.nn.Module):
         self.eval()
 
     @torch.no_grad()
-    def __call__(self, images, prompts):
+    def __call__(self, images, prompts, timesteps=None, config=None):
         raise NotImplementedError("Subclasses must implement __call__")
 
 class BrightnessScorer(Scorer):
@@ -27,7 +27,7 @@ class BrightnessScorer(Scorer):
         super().__init__(dtype)
 
     @torch.no_grad()
-    def __call__(self, images, prompts, timesteps):
+    def __call__(self, images, prompts, timesteps=None, config=None):
         if isinstance(images, list):
             processed = []
             for img in images:
@@ -92,7 +92,7 @@ class CompressibilityScorer(Scorer):
         self.max_size = max_size
 
     @torch.no_grad()
-    def __call__(self, images, prompts, timesteps):
+    def __call__(self, images, prompts, timesteps=None, config=None):
         images = [im.cpu().squeeze(0) for im in images]
         if isinstance(images, torch.Tensor):
             # Convert tensor to numpy array
@@ -163,7 +163,7 @@ class CLIPScorer(Scorer):
         self.clip.eval()
 
     @torch.no_grad()
-    def __call__(self, images, prompts, timesteps=None):
+    def __call__(self, images, prompts, timesteps=None, config=None):
         device = next(self.parameters()).device
         
         # Process images
@@ -232,7 +232,7 @@ class ImageRewardScorer(Scorer):
             raise ImportError("ImageReward package not found. Please install it with: pip install image-reward")
 
     @torch.no_grad()
-    def __call__(self, images, prompts, timesteps=None):
+    def __call__(self, images, prompts, timesteps=None, config=None):
         """
         Score images based on human preferences using ImageReward.
         
@@ -339,7 +339,7 @@ class HPSScorer(Scorer):
         self.hps_version = hps_version
 
     @torch.no_grad()
-    def __call__(self, images, prompts, timesteps=None):
+    def __call__(self, images, prompts, timesteps=None, config=None):
         """
         Score images based on human preferences using HPSv2.
         
@@ -442,6 +442,7 @@ class CountingScorer(Scorer):
         try:
             from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection, AutoModelForMaskGeneration
             import supervision as sv
+            self.sv = sv  # Store supervision module as instance variable
         except ImportError as e:
             raise ImportError(f"Required packages not found: {e}. Please install transformers and supervision.")
         
@@ -471,7 +472,7 @@ class CountingScorer(Scorer):
             "log_interval": 5,
             "class_names": "airplane, camel",
             "class_gt_counts": "3, 6",
-            "reward_func": "diff"
+            "reward_func": "accuracy"
         }
         
         # Update with provided config
@@ -483,13 +484,14 @@ class CountingScorer(Scorer):
             bboxmaker_id = "IDEA-Research/grounding-dino-base"
             segmenter_id = "facebook/sam-vit-base"
             
+            from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection, AutoModelForMaskGeneration
             self.gd_processor = AutoProcessor.from_pretrained(bboxmaker_id)
             self.bboxmaker = AutoModelForZeroShotObjectDetection.from_pretrained(bboxmaker_id).to(f"cuda:{self.config['device']}")
             self.sam_processor = AutoProcessor.from_pretrained(segmenter_id)
             self.segmentator = AutoModelForMaskGeneration.from_pretrained(segmenter_id).to(f"cuda:{self.config['device']}")
             
-            self.bounding_box_annotator = sv.BoxAnnotator()
-            self.label_annotator = sv.LabelAnnotator(text_position=sv.Position.CENTER)
+            self.bounding_box_annotator = self.sv.BoxAnnotator()
+            self.label_annotator = self.sv.LabelAnnotator(text_position=self.sv.Position.CENTER)
             
             # Parse class names and ground truth counts
             self.class_gt_counts = torch.tensor([int(n.strip()) for n in self.config['class_gt_counts'].split(",")])
@@ -591,9 +593,8 @@ class CountingScorer(Scorer):
             reward = self._gdsam_reward(pil_img, step)
             rewards.append(reward)
         
-        # Convert to tensor and move to appropriate device
-        device = next(self.parameters()).device if list(self.parameters()) else torch.device('cpu')
-        rewards_tensor = torch.tensor(rewards, dtype=self.dtype, device=device)
+        # Convert to tensor and ensure it's on CPU for numpy compatibility
+        rewards_tensor = torch.tensor(rewards, dtype=self.dtype, device='cpu')
         
         return rewards_tensor
 
@@ -688,13 +689,67 @@ class CountingScorer(Scorer):
         if self.config['reward_func'] == "diff":
             diff = torch.sum((self.class_gt_counts - torch.tensor(counts)) ** 2)
             reward = -diff
+        elif self.config['reward_func'] == "normalized":
+            # Normalized reward: 1.0 for perfect match, 0.0 for maximum deviation
+            # Uses exponential decay based on relative error
+            total_gt = torch.sum(self.class_gt_counts).float()
+            if total_gt > 0:
+                # Calculate relative error (normalized by total ground truth count)
+                relative_error = torch.sum(torch.abs(self.class_gt_counts - torch.tensor(counts))) / total_gt
+                # Apply exponential decay: reward = exp(-relative_error)
+                # This gives 1.0 for perfect match, ~0.37 for 100% error, ~0.14 for 200% error
+                reward = torch.exp(-relative_error)
+            else:
+                # Edge case: no ground truth objects expected
+                reward = 1.0 if sum(counts) == 0 else 0.0
+        elif self.config['reward_func'] == "iou":
+            # IoU-like reward: intersection over union of counts
+            # reward = min(gt, detected) / max(gt, detected) for each class, then average
+            total_gt = torch.sum(self.class_gt_counts).float()
+            total_detected = sum(counts)
+            
+            if total_gt > 0 and total_detected > 0:
+                # Calculate IoU for each class
+                iou_scores = []
+                for gt_count, detected_count in zip(self.class_gt_counts, counts):
+                    if gt_count > 0 or detected_count > 0:
+                        intersection = min(gt_count, detected_count)
+                        union = max(gt_count, detected_count)
+                        iou_scores.append(intersection / union)
+                    else:
+                        # Both are 0, perfect match
+                        iou_scores.append(1.0)
+                
+                # Average IoU across all classes
+                reward = torch.tensor(iou_scores, dtype=self.dtype).mean()
+            else:
+                # Edge case: no objects expected or detected
+                reward = 1.0 if total_gt == total_detected else 0.0
+        elif self.config['reward_func'] == "accuracy":
+            # Simple accuracy: correctly counted objects / total expected objects
+            # reward = sum(min(gt, detected)) / sum(gt)
+            total_gt = torch.sum(self.class_gt_counts).float()
+            
+            if total_gt > 0:
+                # Count correctly detected objects (intersection)
+                correct_count = sum(min(gt_count, detected_count) for gt_count, detected_count in zip(self.class_gt_counts, counts))
+                reward = correct_count / total_gt
+            else:
+                # Edge case: no objects expected
+                reward = 1.0 if sum(counts) == 0 else 0.0
         else:
             raise NotImplementedError(f"Unknown reward function: {self.config['reward_func']}")
         
+        # Ensure reward is a CPU tensor for numpy compatibility
+        if isinstance(reward, torch.Tensor):
+            reward = reward.cpu()
+        else:
+            reward = torch.tensor(reward, dtype=self.dtype, device='cpu')
+        
         self.reward_logs.append(reward)
         
-        # Debug logging (simplified version)
-        if not self.disable_debug and (step % self.log_interval == 0):
-            print(f"Step {step}: Counts {counts}, GT {self.class_gt_counts.tolist()}, Reward {reward}")
+        # # Debug logging (simplified version)
+        # if not self.disable_debug and (step % self.log_interval == 0):
+        #     print(f"Step {step}: Counts {counts}, GT {self.class_gt_counts.tolist()}, Reward {reward}")
         
         return reward
