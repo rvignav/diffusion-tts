@@ -427,3 +427,274 @@ class HPSScorer(Scorer):
         scores_tensor = torch.tensor(scores, dtype=self.dtype, device=device)
         
         return scores_tensor
+
+class CountingScorer(Scorer):
+    def __init__(self, dtype=torch.float32):
+        """
+        Initialize a scorer that counts objects in images and compares with ground truth counts.
+        
+        Args:
+            dtype: Torch data type for the output
+        """
+        super().__init__(dtype)
+        
+        # Import required modules
+        try:
+            from transformers import AutoProcessor, AutoModelForZeroShotObjectDetection, AutoModelForMaskGeneration
+            import supervision as sv
+        except ImportError as e:
+            raise ImportError(f"Required packages not found: {e}. Please install transformers and supervision.")
+        
+        # Initialize models and components
+        self._initialized = False
+        self.gd_processor = None
+        self.bboxmaker = None
+        self.sam_processor = None
+        self.segmentator = None
+        self.bounding_box_annotator = None
+        self.label_annotator = None
+        
+        self.detection_logs = []
+        self.reward_logs = []
+
+    def _initialize_models(self, config):
+        """Initialize models based on config."""
+        if self._initialized:
+            return
+            
+        # Set default config values
+        default_config = {
+            "device": 0,
+            "batch_size": 10,
+            "count_reward_model": "gdsam",
+            "disable_debug": False,
+            "log_interval": 5,
+            "class_names": "airplane, camel",
+            "class_gt_counts": "3, 6",
+            "reward_func": "diff"
+        }
+        
+        # Update with provided config
+        self.config = {**default_config, **config}
+        
+        print(f"Counting Scorer Config: {self.config['count_reward_model']}")
+        
+        if self.config['count_reward_model'] == "gdsam":
+            bboxmaker_id = "IDEA-Research/grounding-dino-base"
+            segmenter_id = "facebook/sam-vit-base"
+            
+            self.gd_processor = AutoProcessor.from_pretrained(bboxmaker_id)
+            self.bboxmaker = AutoModelForZeroShotObjectDetection.from_pretrained(bboxmaker_id).to(f"cuda:{self.config['device']}")
+            self.sam_processor = AutoProcessor.from_pretrained(segmenter_id)
+            self.segmentator = AutoModelForMaskGeneration.from_pretrained(segmenter_id).to(f"cuda:{self.config['device']}")
+            
+            self.bounding_box_annotator = sv.BoxAnnotator()
+            self.label_annotator = sv.LabelAnnotator(text_position=sv.Position.CENTER)
+            
+            # Parse class names and ground truth counts
+            self.class_gt_counts = torch.tensor([int(n.strip()) for n in self.config['class_gt_counts'].split(",")])
+            self.class_names = [t.strip() for t in self.config['class_names'].split(",")]
+            self.class_texts = ". ".join(self.class_names) + "."
+            
+            print(f"Class texts: {self.class_texts}")
+            print(f"Class names: {self.class_names}")
+            print(f"Class gt counts: {self.class_gt_counts}")
+        else:
+            raise NotImplementedError(f"Unknown reward model: {self.config['count_reward_model']}")
+        
+        self.disable_debug = self.config['disable_debug']
+        self.log_interval = self.config['log_interval']
+        self._initialized = True
+
+    @torch.no_grad()
+    def __call__(self, images, prompts, timesteps=None, config=None):
+        """
+        Count objects in images and return rewards based on comparison with ground truth.
+        
+        Args:
+            images: List of PIL Images or torch.Tensor images
+            prompts: Not used by counting scorer (kept for compatibility)
+            timesteps: Current timestep for logging (optional)
+            config: Configuration dictionary with keys:
+                - class_names (str): Comma-separated class names (e.g., "horses, cars, train, airplanes")
+                - class_gt_counts (str): Comma-separated ground truth counts (e.g., "5, 3, 1, 5")
+                - device (int): Device to run models on (default: 0)
+                - batch_size (int): Batch size for processing (default: 10)
+                - count_reward_model (str): Model to use for counting (default: "gdsam")
+                - disable_debug (bool): Whether to disable debug logging (default: False)
+                - log_interval (int): Interval for logging (default: 5)
+                - reward_func (str): Reward function type (default: "diff")
+            
+        Returns:
+            torch.Tensor: Rewards for each image based on counting accuracy
+        """
+        # Initialize models if not already done or if config changed
+        if config is not None:
+            self._initialize_models(config)
+        
+        # Handle single image case
+        if not isinstance(images, list):
+            images = [images]
+        
+        # Convert torch.Tensor images to PIL Images
+        pil_images = []
+        for img in images:
+            if isinstance(img, torch.Tensor):
+                # Handle different tensor formats
+                if img.dim() == 4:  # [B, C, H, W] - take first image
+                    img = img.squeeze(0)
+                elif img.dim() == 3:  # [C, H, W]
+                    pass
+                else:
+                    raise ValueError(f"Unexpected tensor shape: {img.shape}")
+                
+                # Convert to numpy and transpose if needed
+                img_np = img.cpu().numpy()
+                if img_np.shape[0] in [1, 3]:  # CHW format
+                    img_np = np.transpose(img_np, (1, 2, 0))  # Convert to HWC
+                
+                # Handle grayscale
+                if img_np.shape[2] == 1:
+                    img_np = img_np.squeeze(2)
+                
+                # Convert to uint8 if needed
+                if img_np.dtype != np.uint8:
+                    if img_np.max() <= 1.0:
+                        img_np = (img_np * 255).astype(np.uint8)
+                    else:
+                        img_np = img_np.astype(np.uint8)
+                
+                pil_img = Image.fromarray(img_np)
+            elif isinstance(img, np.ndarray):
+                # Handle numpy array
+                if img.ndim == 3 and img.shape[0] in [1, 3]:  # CHW format
+                    img = np.transpose(img, (1, 2, 0))  # Convert to HWC
+                if img.ndim == 3 and img.shape[2] == 1:  # Grayscale
+                    img = img.squeeze(2)
+                if img.dtype != np.uint8:
+                    if img.max() <= 1.0:
+                        img = (img * 255).astype(np.uint8)
+                    else:
+                        img = img.astype(np.uint8)
+                pil_img = Image.fromarray(img)
+            elif isinstance(img, Image.Image):
+                pil_img = img
+            else:
+                raise ValueError(f"Unsupported image type: {type(img)}")
+            
+            pil_images.append(pil_img)
+        
+        # Process each image
+        rewards = []
+        for i, pil_img in enumerate(pil_images):
+            step = timesteps[i] if timesteps is not None else i
+            reward = self._gdsam_reward(pil_img, step)
+            rewards.append(reward)
+        
+        # Convert to tensor and move to appropriate device
+        device = next(self.parameters()).device if list(self.parameters()) else torch.device('cpu')
+        rewards_tensor = torch.tensor(rewards, dtype=self.dtype, device=device)
+        
+        return rewards_tensor
+
+    def _gdsam_reward(self, image, step):
+        """Calculate reward using Grounding DINO + SAM approach."""
+        texts = self.class_texts
+        names = texts[:-1].split(". ")
+        
+        gd_inputs = self.gd_processor(images=image, text=texts, return_tensors="pt").to(f"cuda:{self.config['device']}")
+        outputs = self.bboxmaker(**gd_inputs)
+        
+        results = self.gd_processor.post_process_grounded_object_detection(
+            outputs,
+            gd_inputs.input_ids,
+            box_threshold=0.2,
+            text_threshold=0.2,
+            target_sizes=[image.size[::-1]]
+        )[0]
+        
+        del results["text_labels"]
+        
+        gt_labels = {label: i for i, label in enumerate(names)}
+        results["labels"] = torch.tensor([gt_labels.get(label, -1) for label in results["labels"]])
+        indices = torch.argwhere(results["labels"] >= 0).reshape(-1)
+        
+        for key in results:
+            results[key] = results[key][indices].cpu()
+        
+        cnt = 0
+        indices = []
+        unq_labels = torch.unique(results["labels"])
+        for i in unq_labels:
+            idx0 = torch.argwhere(results["labels"] == i).reshape(-1)
+            scores = results["scores"][idx0]
+            max_score = torch.max(scores).item()
+            idx1 = torch.argwhere((scores > max_score * 0.6) | (scores > 0.32)).reshape(-1)
+            indices.append(idx0[idx1])
+            cnt += 1
+        
+        counts = [0 for _ in names]
+        
+        if cnt:
+            indices = torch.cat(indices, dim=0)
+            for key in results:
+                results[key] = results[key][indices]
+            
+            boxes = [results["boxes"].numpy().tolist()]
+            
+            sam_inputs = self.sam_processor(images=image, input_boxes=boxes, return_tensors="pt").to(f"cuda:{self.config['device']}")
+            
+            outputs = self.segmentator(**sam_inputs)
+            masks = self.sam_processor.post_process_masks(
+                masks=outputs.pred_masks,
+                original_sizes=sam_inputs.original_sizes,
+                reshaped_input_sizes=sam_inputs.reshaped_input_sizes
+            )[0]
+            masks = masks.float().permute(0, 2, 3, 1).mean(dim=-1) > 0
+            
+            results["masks"] = masks
+            results["mask_sums"] = torch.sum(masks, dim=[1, 2]).cpu()
+            
+            indices0 = []
+            scores = torch.zeros(results["masks"][0].shape, dtype=torch.float32, device=f"cuda:{self.config['device']}")
+            
+            for label_i in unq_labels:
+                idx0 = torch.argwhere(results["labels"] == label_i).reshape(-1)
+                cuml_mask = torch.zeros_like(results["masks"][0])
+                
+                for i0 in sorted(idx0.numpy().tolist(), key=lambda i: results["mask_sums"][i].item()):
+                    ms = results["masks"][i0]
+                    msum = results["mask_sums"][i0]
+                    mpos = torch.sum(torch.bitwise_and(~cuml_mask, ms)).item()
+                    
+                    if mpos / msum > 0.5:
+                        indices0.append(i0)
+                        cuml_mask |= ms
+                        scores[ms] = torch.maximum(scores[ms], torch.full_like(scores[ms], results["scores"][i0].item()))
+            
+            indices1 = []
+            for i0 in indices0:
+                ms = results["masks"][i0]
+                ssum = torch.sum(scores[ms] > results["scores"][i0].item()) / results["mask_sums"][i0].item()
+                if ssum < 0.5:
+                    indices1.append(i0)
+                    counts[results["labels"][i0].item()] += 1
+            
+            indices1 = torch.tensor(indices1, dtype=torch.int64)
+            for key in results:
+                results[key] = results[key][indices1]
+        
+        # Calculate reward based on difference from ground truth
+        if self.config['reward_func'] == "diff":
+            diff = torch.sum((self.class_gt_counts - torch.tensor(counts)) ** 2)
+            reward = -diff
+        else:
+            raise NotImplementedError(f"Unknown reward function: {self.config['reward_func']}")
+        
+        self.reward_logs.append(reward)
+        
+        # Debug logging (simplified version)
+        if not self.disable_debug and (step % self.log_interval == 0):
+            print(f"Step {step}: Counts {counts}, GT {self.class_gt_counts.tolist()}, Reward {reward}")
+        
+        return reward

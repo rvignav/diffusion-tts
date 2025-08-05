@@ -812,6 +812,7 @@ class StableDiffusionPipeline(
         score_function: Optional[Callable] = None,
         method: Optional[str] = "eps_greedy",
         params: Optional[dict] = None,
+        config: Optional[dict] = None,
         **kwargs,
     ):
         r"""
@@ -1115,6 +1116,7 @@ class StableDiffusionPipeline(
                             images = [(image * 127.5 + 128).clip(0, 255).to(torch.uint8)],
                             prompts = [prompt],
                             timesteps= None,
+                            config=config,
                         )
 
                         # Convert score to a Python float for reliable comparison
@@ -1163,6 +1165,7 @@ class StableDiffusionPipeline(
                     images = [(image * 127.5 + 128).clip(0, 255).to(torch.uint8)],
                     prompts = [prompt],
                     timesteps= None,
+                    config=config,
                 )
                 score_value = score.item() if torch.is_tensor(score) else float(score)
                 if score_value > max_score:
@@ -1417,6 +1420,7 @@ class StableDiffusionPipeline(
                                 images = [(image * 127.5 + 128).clip(0, 255).to(torch.uint8)],
                                 prompts = [prompt],
                                 timesteps= None,
+                                config=config,
                             )
 
                             # Convert score to a Python float for reliable comparison
@@ -1469,6 +1473,7 @@ class StableDiffusionPipeline(
                 images = [(image * 127.5 + 128).clip(0, 255).to(torch.uint8)],
                 prompts = [prompt],
                 timesteps= None,
+                config=config,
             )
         
         # Postprocess the image

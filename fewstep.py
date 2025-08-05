@@ -1,5 +1,7 @@
+# XCLiu/instaflow_0_9B_from_sd_1_5
+
 print("================================================")
-print("Sj6K_3: SD eval on 100 images")
+print("fewstep")
 print("================================================")
 
 import os
