@@ -322,7 +322,7 @@ def generate_image_grid(
                     x_flat_var = None
                     
                     # Score based on denoised predictions (x0)
-                    x_flat_var = x0_beam_candidates  # Already [b, C, H, W]
+                    x_flat_var = x_beam_candidates  # Already [b, C, H, W]
                     
                     # Normalize for scoring
                     x_for_scoring = (x_flat_var * 127.5 + 128).clip(0, 255).to(torch.uint8)
@@ -833,7 +833,7 @@ def generate_image_grid(
                 # Score candidates
                 # Score based on predicted x0 (denoised result)
                 # Reshape for scoring [N*batch_size, C, H, W]
-                x_for_scoring = x0_candidates.reshape(-1, *x0_candidates.shape[2:])
+                x_for_scoring = x_candidates.reshape(-1, *x0_candidates.shape[2:])
                 # Convert to proper format for scorer
                 x_for_scoring = (x_for_scoring * 127.5 + 128).clip(0, 255).to(torch.uint8)
                 # Use timesteps=0 for predicted clean images

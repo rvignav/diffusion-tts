@@ -134,9 +134,9 @@ def main():
         best_scores = []
         prompts = [
             "Five horses, three cars, one train, five airplanes",
-            # "Two cups, three paintings, four lamps, and four bananas",
-            # "Four balloons, one cup, four desks, two dogs and four microwaves",
-            # "Four candles, two balloons, one dog, two tomatoes and three helicopters",
+            "Two cups, three paintings, four lamps, and four bananas",
+            "Four balloons, one cup, four desks, two dogs and four microwaves",
+            "Four candles, two balloons, one dog, two tomatoes and three helicopters",
             # "Eight chairs",
             # "Three apples, two oranges, and one banana",
             # "Six pencils, four erasers, and two notebooks",

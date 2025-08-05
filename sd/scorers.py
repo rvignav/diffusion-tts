@@ -478,7 +478,7 @@ class CountingScorer(Scorer):
         # Update with provided config
         self.config = {**default_config, **config}
         
-        print(f"Counting Scorer Config: {self.config['count_reward_model']}")
+        # print(f"Counting Scorer Config: {self.config['count_reward_model']}")
         
         if self.config['count_reward_model'] == "gdsam":
             bboxmaker_id = "IDEA-Research/grounding-dino-base"
@@ -498,9 +498,9 @@ class CountingScorer(Scorer):
             self.class_names = [t.strip() for t in self.config['class_names'].split(",")]
             self.class_texts = ". ".join(self.class_names) + "."
             
-            print(f"Class texts: {self.class_texts}")
-            print(f"Class names: {self.class_names}")
-            print(f"Class gt counts: {self.class_gt_counts}")
+            # print(f"Class texts: {self.class_texts}")
+            # print(f"Class names: {self.class_names}")
+            # print(f"Class gt counts: {self.class_gt_counts}")
         else:
             raise NotImplementedError(f"Unknown reward model: {self.config['count_reward_model']}")
         
